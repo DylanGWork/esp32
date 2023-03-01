@@ -31,6 +31,10 @@
 //! \file
 #define LMIC_DR_LEGACY 0
 #include "lmic_bandplan.h"
+#include "esp_log.h"
+
+#define TAG "lmic"
+
 
 #if defined(DISABLE_BEACONS) && !defined(DISABLE_PING)
 #error Ping needs beacon tracking
@@ -1706,6 +1710,7 @@ static bit_t processJoinAccept_nojoinframe(void) {
             LMIC.opmode &= ~(OP_REJOIN|OP_TXRXPEND);
             if( LMIC.rejoinCnt < 10 )
                 LMIC.rejoinCnt++;
+            
             reportEventAndUpdate(EV_REJOIN_FAILED);
             // stop the join process.
             return 1;
@@ -1714,7 +1719,19 @@ static bit_t processJoinAccept_nojoinframe(void) {
         // need to schedule something.
         LMIC.opmode &= ~OP_TXRXPEND;
         reportEventNoUpdate(EV_JOIN_TXCOMPLETE);
+        LMIC.joinCnt++;
+        ESP_LOGI(TAG, "Join attempt %d \n", LMIC.joinCnt);
+        ESP_LOGI(TAG, "Join attempt %d \n", LMIC.joinCnt);
+        if(LMIC.joinCnt > 2)
+        {
+            // LMIC.opmode = EV_JOIN_FAILED;
+        }
+        //Stop the join process looping forever to help conserve battery life
+        // join_attempts++;
+        // ESP_LOGI(TAG, "Join attempt %d \n", join_attempts);
+
         int failed = LMICbandplan_nextJoinState();
+
         EV(devCond, DEBUG, (e_.reason = EV::devCond_t::NO_JACC,
                             e_.eui    = MAIN::CDEV->getEui(),
                             e_.info   = LMIC.datarate|DR_PAGE,

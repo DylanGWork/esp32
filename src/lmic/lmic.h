@@ -602,6 +602,7 @@ struct lmic_t {
     u1_t        datarate;     // current data rate
     u1_t        errcr;        // error coding rate (used for TX only)
     u1_t        rejoinCnt;    // adjustment for rejoin datarate
+    u1_t        joinCnt;      //Counter for the amount of join attempts that have been made
 
     u1_t        upRepeatCount;  // current up-repeat
     bit_t       initBandplanAfterReset; // cleared by LMIC_reset(), set by first join. See issue #244
@@ -743,6 +744,8 @@ int LMIC_findNextChannel(uint16_t *, const uint16_t *, uint16_t, int);
 u1_t LMIC_getBatteryLevel(void);
 u1_t LMIC_setBatteryLevel(u1_t /* uBattLevel */);
 
+
+
 // APIs for client half of compliance.
 typedef u1_t lmic_compliance_rx_action_t;
 
@@ -754,6 +757,7 @@ enum lmic_compliance_rx_action_e {
 };
 
 lmic_compliance_rx_action_t LMIC_complianceRxMessage(u1_t port, const u1_t *pMessage, size_t nMessage);
+
 
 // Declare onEvent() function, to make sure any definition will have the
 // C conventions, even when in a C++ file.

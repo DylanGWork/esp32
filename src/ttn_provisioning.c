@@ -361,11 +361,11 @@ bool ttn_provisioning_from_mac(const char *app_eui, const char *app_key)
     global_dev_eui[7] = mac[0];
     global_dev_eui[6] = mac[1];
     global_dev_eui[5] = mac[2];
-    global_dev_eui[4] = 0xff;
-    global_dev_eui[3] = 0xfe;
-    global_dev_eui[2] = mac[3];
-    global_dev_eui[1] = mac[4];
-    global_dev_eui[0] = mac[5];
+    global_dev_eui[4] = mac[3];
+    global_dev_eui[3] = mac[4];
+    global_dev_eui[2] = mac[5];
+    global_dev_eui[1] = 0xff;
+    global_dev_eui[0] = 0xff;
 
     return decode(false, NULL, app_eui, app_key);
 }
