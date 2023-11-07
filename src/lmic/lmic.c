@@ -1426,6 +1426,11 @@ static bit_t decodeFrame (void) {
     }
 #if LMIC_DEBUG_LEVEL > 0
     LMIC_DEBUG_PRINTF("%"LMIC_PRId_ostime_t": Received downlink, window=%s, port=%d, ack=%d, txrxFlags=%#x\n", os_getTime(), window, port, ackup, LMIC.txrxFlags);
+    for (unsigned i = 0; i < LMIC.dataBeg; ++i)
+    {
+        // LMIC_DEBUG_PRINTF("Data: %d\n", LMIC.frame[i]); //Print Data from Downlink
+    }
+    
 #endif
     return 1;
 }
@@ -1717,11 +1722,14 @@ static bit_t processJoinAccept_nojoinframe(void) {
         }
         // otherwise it's a normal join. At end of rx2, so we
         // need to schedule something.
+
+        
+
         LMIC.opmode &= ~OP_TXRXPEND;
         reportEventNoUpdate(EV_JOIN_TXCOMPLETE);
         LMIC.joinCnt++;
         ESP_LOGI(TAG, "Join attempt %d \n", LMIC.joinCnt);
-        ESP_LOGI(TAG, "Join attempt %d \n", LMIC.joinCnt);
+        // ESP_LOGI(TAG, "Join attempt %d \n", LMIC.joinCnt);
         if(LMIC.joinCnt > 2)
         {
             // LMIC.opmode = EV_JOIN_FAILED;
@@ -1750,6 +1758,36 @@ static bit_t processJoinAccept_nojoinframe(void) {
                             ? FUNC_ADDR(onJoinFailed)      // one JOIN iteration done and failed
                             : FUNC_ADDR(runEngineUpdate)); // next step to be delayed
         // stop this join process.
+/*Custom code by Dylan to add Communication failure in the Join Process */
+        comms_counter++;
+        ESP_LOGI(TAG, "comms_counter %d \n", comms_counter);
+        #if defined(CFG_au915)
+        if(comms_counter > 5){
+            comms_fail();
+        }
+        #endif
+        #if defined(CFG_eu868)
+        if(comms_counter > 0 && joined == 0)
+            {
+                ESP_LOGI(TAG, "Re-transmitting for join");
+                LMIC.datarate = 0;
+                #if defined(CFG_eu868)
+                LMIC.txpow = 14;
+                #endif
+         } 
+        if(comms_counter > 1){
+            ESP_LOGI(TAG, "comms failing %d \n", comms_counter);
+            comms_fail();
+        }
+        #endif
+    //    #if defined(CFG_us915)
+    //     if(comms_counter > 5){
+    //         comms_fail();
+    //     }
+    //     #endif
+        
+
+/* End Custome code*/
         return 1;
 }
 
@@ -2979,6 +3017,7 @@ lmic_tx_error_t LMIC_sendWithCallback_strict (
     u1_t port, xref2u1_t data, u1_t dlen, u1_t confirmed,
     lmic_txmessage_cb_t *pCb, void *pUserData
 ) {
+    ESP_LOGI(TAG, "Line 2982\n");
     lmic_tx_error_t const result = LMIC_setTxData2_strict(port, data, dlen, confirmed);
     if (result == 0) {
         LMIC.client.txMessageCb = pCb;
@@ -3166,4 +3205,35 @@ u1_t LMIC_setBatteryLevel(u1_t uBattLevel) {
 ///
 u1_t LMIC_getBatteryLevel(void) {
     return LMIC.client.devStatusAns_battery;
+}
+
+
+
+void comms_fail(){
+    ESP_LOGI(TAG, "comms_fail");
+    // vTaskDelete(LED_SEQUENCE);
+    rtc_gpio_init(Membrane_LED_Green);
+    rtc_gpio_set_direction(Membrane_LED_Green, RTC_GPIO_MODE_OUTPUT_ONLY);
+    rtc_gpio_set_level(Membrane_LED_Green,0);
+    rtc_gpio_init(Membrane_LED_Yellow);
+    rtc_gpio_set_direction(Membrane_LED_Yellow, RTC_GPIO_MODE_OUTPUT_ONLY);
+    rtc_gpio_set_level(Membrane_LED_Yellow,0);
+    vTaskDelay(10);
+    rtc_gpio_init(Membrane_LED_Red);
+    rtc_gpio_set_direction(Membrane_LED_Red, RTC_GPIO_MODE_OUTPUT_ONLY);
+    rtc_gpio_set_level(Membrane_LED_Red,1);
+    // setup_ulp();
+    init_ulp_program();
+    ulp_counter_state_for_ULP = 720000000;
+    ulp_state = 10;
+    ulp_LED_state = 10;
+    state = 10;
+
+    vTaskDelay(100);
+    interrupts_service_no_impact();
+    ESP_LOGI(TAG, "States: %d, %u", state, ulp_LED_state);    
+
+    ESP_ERROR_CHECK( esp_sleep_enable_ulp_wakeup()); 
+    esp_deep_sleep_start();
+    ESP_LOGI(TAG, "should not see this");
 }

@@ -148,8 +148,9 @@ void init_io(void)
         .intr_type = GPIO_INTR_POSEDGE,
     };
     gpio_config(&input_pin_config);
-
+    #ifdef DEBUGGING_PRINTS
     ESP_LOGI(TAG, "IO initialized");
+    #endif
 }
 
 void hal_pin_rxtx(u1_t val)
@@ -225,8 +226,9 @@ void init_spi(void)
 
     esp_err_t ret = spi_bus_add_device(spi_host, &spi_config, &spi_handle);
     ESP_ERROR_CHECK(ret);
-
-    ESP_LOGI(TAG, "SPI initialized");
+    #ifdef DEBUGGING_PRINTS
+    // ESP_LOGI(TAG, "SPI initialized");
+    #endif
 }
 
 void hal_spi_write(u1_t cmd, const u1_t *buf, size_t len)
@@ -325,8 +327,9 @@ void init_timer(void)
     gettimeofday(&now, NULL);
     time_offset += (int64_t)now.tv_sec * 1000000;
     initial_time_offset = 0;
-
-    ESP_LOGI(TAG, "Timer initialized");
+    #ifdef DEBUGGING_PRINTS
+    // ESP_LOGI(TAG, "Timer initialized");
+    #endif
 }
 
 uint32_t hal_esp32_get_time(void)

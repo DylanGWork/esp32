@@ -24,6 +24,7 @@
 #define TAG "ttn"
 
 #define DEFAULT_MAX_TX_POWER -1000
+extern TaskHandle_t LED_SEQUENCE;
 
 /**
  * @brief Reason the user code is waiting
@@ -102,7 +103,10 @@ void ttn_configure_pins(spi_host_device_t spi_host, uint8_t nss, uint8_t rxtx, u
 
 void ttn_set_subband(int band)
 {
+    // ESP_LOGW(TAG, "BAND %d", subband);
+
     subband = band;
+    // ESP_LOGW(TAG, "BAND %d", subband);
 }
 
 void start(void)
@@ -116,6 +120,7 @@ void start(void)
     os_init_ex(NULL);
     hal_esp32_enter_critical_section();
     LMIC_reset();
+
     LMIC_setClockError(MAX_CLOCK_ERROR * 4 / 100);
     waiting_reason = TTN_WAITING_NONE;
     hal_esp32_leave_critical_section();
@@ -211,6 +216,8 @@ bool ttn_join(void)
             return false;
     }
 
+ 
+    // Register callback for received messages
     return join_core();
 }
 
@@ -288,18 +295,26 @@ bool join_core(void)
 
     has_joined = true;
     hal_esp32_enter_critical_section();
+
     xQueueReset(lmic_event_queue);
+
     waiting_reason = TTN_WAITING_FOR_JOIN;
 
-    LMIC_startJoining();
+
     config_rf_params();
+    LMIC_startJoining();
+
 
     hal_esp32_wake_up();
+
     hal_esp32_leave_critical_section();
 
     ttn_lmic_event_t event;
+
     xQueueReceive(lmic_event_queue, &event, portMAX_DELAY);
+
     has_joined = event.event == TTN_EVNT_JOIN_COMPLETED;
+
     return has_joined;
 }
 
@@ -308,6 +323,7 @@ ttn_response_code_t ttn_transmit_message(const uint8_t *payload, size_t length, 
     hal_esp32_enter_critical_section();
     if (waiting_reason != TTN_WAITING_NONE || (LMIC.opmode & OP_TXRXPEND) != 0)
     {
+        ESP_LOGI(TAG, "311: %d\n", waiting_reason);
         hal_esp32_leave_critical_section();
         return TTN_ERROR_TRANSMISSION_FAILED;
     }
@@ -318,7 +334,6 @@ ttn_response_code_t ttn_transmit_message(const uint8_t *payload, size_t length, 
     LMIC_setTxData2(port, (xref2u1_t)payload, length, confirm);
     hal_esp32_wake_up();
     hal_esp32_leave_critical_section();
-
     while (true)
     {
         ttn_lmic_event_t result;
@@ -479,15 +494,30 @@ void event_callback(void *user_data, ev_t event)
     switch (event)
     {
     case EV_TXSTART:
+        
         current_rx_tx_window = TTN_WINDOW_TX;
         save_rf_settings(&last_rf_settings[TTN_WINDOW_TX]);
         clear_rf_settings(&last_rf_settings[TTN_WINDOW_RX1]);
         clear_rf_settings(&last_rf_settings[TTN_WINDOW_RX2]);
+
         break;
 
     case EV_RXSTART:
         if (current_rx_tx_window != TTN_WINDOW_RX1)
         {
+
+            if(retransmit_counter > 1 && joined == 1)
+            {
+                ESP_LOGI(TAG, "Re-transmitting for confirmed");
+                LMIC.datarate = 0;
+                #if defined(CFG_eu868)
+                LMIC.txpow = 14;
+                #endif
+                #if defined(CFG_au915)
+                LMIC.txpow = 28;
+                #endif
+
+            } 
             current_rx_tx_window = TTN_WINDOW_RX1;
             save_rf_settings(&last_rf_settings[TTN_WINDOW_RX1]);
         }
@@ -495,6 +525,8 @@ void event_callback(void *user_data, ev_t event)
         {
             current_rx_tx_window = TTN_WINDOW_RX2;
             save_rf_settings(&last_rf_settings[TTN_WINDOW_RX2]);
+            ESP_LOGI(TAG, "What happens here line 514 SF: %d LMIC.txpow: %d, lbt_dbmax: %d, LMIC.adrTxPow: %d \n", LMIC.datarate, LMIC.txpow, LMIC.lbt_dbmax, LMIC.adrTxPow);
+            retransmit_counter++;
         }
         break;
 
@@ -506,16 +538,50 @@ void event_callback(void *user_data, ev_t event)
 #if LMIC_ENABLE_event_logging
     ttn_log_event(event, event_names[event], 0);
 #elif CONFIG_LOG_DEFAULT_LEVEL >= 3
-    ESP_LOGI(TAG, "event %s", event_names[event]);
+
+     
 #endif
+        ttn_event_t ttn_event = TTN_EVENT_NONE;
 
-    ttn_event_t ttn_event = TTN_EVENT_NONE;
+//    ESP_LOGI(TAG, "events test %s, %d", event_names[event], retransmit_counter);
+    if(retransmit_counter > 3)
+    {
+        #if defined(CFG_eu868)
+        interrupts_service_no_impact();
+        setup_ulp();
+        ESP_LOGI(TAG, "Too many, try again later \n");
+        ttn_event = 0;
+        waiting_reason = 0;
+        LMIC.opmode = 0;
+        LMIC.datarate = 3;
+        if(state == 6 || state == 7)
+        {
+            state = 3;
+        }
+        // vTaskDelete(LED_SEQUENCE);
+        ttn_prepare_for_deep_sleep();
+        vTaskDelay(10);
+        rtc_gpio_init(Membrane_LED_Yellow);
+        rtc_gpio_set_direction(Membrane_LED_Yellow, RTC_GPIO_MODE_OUTPUT_ONLY);
+        rtc_gpio_set_level(Membrane_LED_Yellow,0);
+        ULP_Var_reset();
+        ESP_LOGI(TAG, "ttn_event %d, waiting_reason %d \n", ttn_event, waiting_reason);
 
+        ESP_ERROR_CHECK( esp_sleep_enable_ulp_wakeup());
+        esp_deep_sleep_start();
+        #endif
+        #if defined(CFG_au915)
+        //nothing
+        #endif
+
+    }
+    ESP_LOGI(TAG, "ttn_event %d, waiting_reason %d, LMIC.opmode %u \n", ttn_event, waiting_reason, LMIC.opmode);
     if (waiting_reason == TTN_WAITING_FOR_JOIN)
     {
         if (event == EV_JOINED)
         {
             ttn_event = TTN_EVNT_JOIN_COMPLETED;
+            retransmit_counter = 0;
         }
         else if (event == EV_REJOIN_FAILED || event == EV_RESET)
         {
@@ -534,9 +600,25 @@ void event_callback(void *user_data, ev_t event)
 // Called by LMIC when a message has been received
 void message_received_callback(void *user_data, uint8_t port, const uint8_t *message, size_t message_size)
 {
-    ttn_lmic_event_t result = {
+    // ESP_LOGI(TAG, "Downlink Recevied on port %d", port);
+    // ESP_LOGI(TAG,"Downlink of %d bytes received on port %d:", message_size, port);
+
+    for(int i = 0; i < sizeof(message_size); ++i)
+    {
+        // printf("%d\n ", message[i]); // Print message
+    }
+    if (LMIC_complianceRxMessage(port, message, message_size) == LMIC_COMPLIANCE_RX_ACTION_PROCESS) 
+    {
+        ttn_lmic_event_t result = {
+            .event = TTN_EVENT_MESSAGE_RECEIVED, .port = port, .message = message, .message_size = message_size};
+        xQueueSend(lmic_event_queue, &result, pdMS_TO_TICKS(100));
+        printf("\033[38;5;202mLMIC Compliance message process\033[0m\n");
+    } else {    //Required or any application layer downlink code will not be processed.
+        ttn_lmic_event_t result = {
         .event = TTN_EVENT_MESSAGE_RECEIVED, .port = port, .message = message, .message_size = message_size};
-    xQueueSend(lmic_event_queue, &result, pdMS_TO_TICKS(100));
+        xQueueSend(lmic_event_queue, &result, pdMS_TO_TICKS(100));
+        // printf("\033[38;5;202mLMIC Compliance message not process\033[0m\n");
+    }
 }
 
 // Called by LMIC when a message has been transmitted (or the transmission failed)

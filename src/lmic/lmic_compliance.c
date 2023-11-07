@@ -21,6 +21,13 @@ Description:
 #include "lorawan_spec_compliance.h"
 #include <stdbool.h>
 #include <string.h>
+#include "esp_log.h"
+#include "ttn.h"
+
+#define TAG "compliance"
+
+// #include "../../main/main.h"
+
 
 #if defined(LMIC_PRINTF_TO)
 # include <stdio.h>
@@ -54,6 +61,8 @@ static lmic_event_cb_t lmicEventCb;
 static lmic_txmessage_cb_t sendUplinkCompleteCb;
 static osjobcbfn_t timerExpiredCb;
 
+static void evLinkCheckReqCommand(void);
+
 /* these are declared global so the optimizer can chuck them without warnings */
 const char *LMICcompliance_txSuccessToString(int fSuccess);
 const char * LMICcompliance_fsmstate_getName(lmic_compliance_fsmstate_t state);
@@ -69,9 +78,9 @@ const char * LMICcompliance_fsmstate_getName(lmic_compliance_fsmstate_t state);
 |   Variables.
 |
 \****************************************************************************/
-
 lmic_compliance_t LMIC_Compliance;
 
+extern bool have_keys;
 /*
 
 Name:   LMIC_complianceRxMessage()
@@ -209,7 +218,7 @@ static void evActivate(void) {
         LMIC_Compliance.downlinkCount = 0;
         LMIC_Compliance.eventflags |= LMIC_COMPLIANCE_EVENT_ACTIVATE;
         LMIC_Compliance.state = LMIC_COMPLIANCE_STATE_ACTIVATING;
-
+        ESP_LOGI(TAG, "Checking line 218\n");
         LMIC_Compliance.saveEvent.pEventCb = LMIC.client.eventCb;
         LMIC_Compliance.saveEvent.pUserData = LMIC.client.eventUserData;
 
@@ -259,35 +268,45 @@ static void evMessage(
 ) {
     if (nMessage == 0)
         return;
-
+    LMIC_Compliance.uplinkCount = 0; // Reset to 0 each time a downlink is recevied.
     const uint8_t cmd = pMessage[0];
+    ESP_LOGW(TAG, "Message Processing\n");
     switch (cmd) {
         case LORAWAN_COMPLIANCE_CMD_DEACTIVATE: {
             evDeactivate();
+            ESP_LOGW(TAG, "Deactivate line 273\n");
             break;
         }
         case LORAWAN_COMPLIANCE_CMD_ACTIVATE: {
             if (isActivateMessage(pMessage, nMessage))
                 evActivate();
+                ESP_LOGW(TAG, "Activate line 279\n");
             break;
         }
         case LORAWAN_COMPLIANCE_CMD_SET_CONFIRM: {
             LMIC_Compliance.fsmFlags |= LMIC_COMPLIANCE_FSM_CONFIRM;
+            ESP_LOGW(TAG, "Activate line 288\n");
             break;
         }
         case LORAWAN_COMPLIANCE_CMD_SET_UNCONFIRM: {
             LMIC_Compliance.fsmFlags &= ~LMIC_COMPLIANCE_FSM_CONFIRM;
+            ESP_LOGW(TAG, "Activate line 293\n");
             break;
         }
         case LORAWAN_COMPLIANCE_CMD_ECHO: {
+            ESP_LOGW(TAG, "Activate line echo\n");
             evEchoCommand(pMessage, nMessage);
             break;
             }
         case LORAWAN_COMPLIANCE_CMD_LINK: {
             // we are required to initiate a Link
+            // ESP_LOGI(TAG, "Link check not implemented\n");
+            ESP_LOGW(TAG, "linkcheck\n");
+            evLinkCheckReqCommand(); // we are required to initiate a Link
             break;
         }
         case LORAWAN_COMPLIANCE_CMD_JOIN: {
+            ESP_LOGW(TAG, "compliance join\n");
             evJoinCommand();
             break;
         }
@@ -320,7 +339,7 @@ Returns:
 static void evDeactivate(void) {
     LMIC_Compliance.eventflags |= LMIC_COMPLIANCE_EVENT_DEACTIVATE;
     LMIC_Compliance.state = LMIC_COMPLIANCE_STATE_STOPPING;
-
+    ESP_LOGI(TAG, "Inside Deactive %d\n", LMIC_Compliance.state);
     // restore user's event handler.
     LMIC_registerEventCb(LMIC_Compliance.saveEvent.pEventCb, LMIC_Compliance.saveEvent.pUserData);
 
@@ -361,8 +380,21 @@ Returns:
 static void evJoinCommand(
     void
 ) {
+    // LMIC_COMPLIANCE_PRINTF("Rejoin requested.\n");
+    
     LMIC_unjoin();
-    evDeactivate();
+    #if defined(CFG_au915)
+    ttn_set_subband(2);
+    #endif
+    LMIC_reset();
+    // have_keys = true;
+    // printf("have_keys in comp %d\n", have_keys);
+    // LMIC_unjoinAndRejoin();
+    evDeactivate(); //Deactivate due to conflicts, could be performed better
+    // joined = 1; 
+    // compliance = true; 
+    //  //Required or you get an error.
+    evActivate(); // re-activate to continue testing
 }
 
 /*
@@ -392,7 +424,7 @@ static void evEchoCommand(
     size_t nMessage
 ) {
     uint8_t *pResponse;
-
+    ESP_LOGI(TAG, "Echo Line 406\n");
     if (nMessage > sizeof(LMIC_Compliance.uplinkMessage))
         return;
 
@@ -406,6 +438,7 @@ static void evEchoCommand(
     // each byte in the body has to be incremented by one.
     for (; nMessage > 0; --nMessage) {
         *pResponse++ = (uint8_t)(*pMessage++ + 1);
+        ESP_LOGI(TAG, "What's this area do? Line 420\n");
     }
 
     // now that the message is formatted, tell the fsm to send it;
@@ -608,7 +641,7 @@ fsmDispatch(
         case LMIC_COMPLIANCE_FSMSTATE_ECHOING: {
             if (fEntry)
                 acSendUplinkBuffer();
-
+                ESP_LOGI(TAG, "Line 623\n");
             if (eventflags_TestAndClear(LMIC_COMPLIANCE_EVENT_UPLINK_COMPLETE)) {
                 newState = LMIC_COMPLIANCE_FSMSTATE_RECOVERY;
             }
@@ -617,6 +650,7 @@ fsmDispatch(
 
         case LMIC_COMPLIANCE_FSMSTATE_REPORTING: {
             if (fEntry)
+                ESP_LOGI(TAG, "Line 632\n");
                 acSendUplink();
 
             if (eventflags_TestAndClear(LMIC_COMPLIANCE_EVENT_UPLINK_COMPLETE)) {
@@ -629,7 +663,7 @@ fsmDispatch(
             if (fEntry) {
                 if (LMIC_Compliance.eventflags & (LMIC_COMPLIANCE_EVENT_DEACTIVATE |
                                                   LMIC_COMPLIANCE_EVENT_ECHO_REQUEST)) {
-                    acSetTimer(sec2osticks(1));
+                    acSetTimer(sec2osticks(0));
                 } else {
                     acSetTimer(sec2osticks(5));
                 }
@@ -651,14 +685,18 @@ fsmDispatch(
 
 static void acEnterActiveMode(void) {
     // indicate to the outer world that we're active.
+    ESP_LOGI(TAG, "Enter Active Mode\n");
+
     LMIC_Compliance.state = LMIC_COMPLIANCE_STATE_ACTIVE;
 }
 
 void acSetTimer(ostime_t delay) {
+    ESP_LOGI(TAG, "Set Timer\n");
     os_setTimedCallback(&LMIC_Compliance.timerJob, os_getTime() + delay, timerExpiredCb);
 }
 
 static void timerExpiredCb(osjob_t *j) {
+    ESP_LOGI(TAG, "Timer Expired\n");
     LMIC_API_PARAMETER(j);
     LMIC_Compliance.eventflags |= LMIC_COMPLIANCE_EVENT_TIMER_EXPIRED;
     fsmEval();
@@ -668,6 +706,7 @@ static void lmicEventCb(
     void *pUserData,
     ev_t ev
 ) {
+    ESP_LOGI(TAG, "LMIC Event\n");
     LMIC_API_PARAMETER(pUserData);
 
     // pass to user handler
@@ -685,6 +724,7 @@ static void lmicEventCb(
 
 
 static void acExitActiveMode(void) {
+    ESP_LOGI(TAG, "Exit Active Mode\n");
     LMIC_Compliance.state = LMIC_COMPLIANCE_STATE_IDLE;
     os_clearCallback(&LMIC_Compliance.timerJob);
     LMIC_clrTxData();
@@ -692,6 +732,12 @@ static void acExitActiveMode(void) {
 
 
 static void acSendUplink(void) {
+    ESP_LOGI(TAG, "Sending Compliance Uplink\n");
+    ++LMIC_Compliance.uplinkCount;
+    if(LMIC_Compliance.uplinkCount > 192) // Exit after 192 up frames with no downlink 
+    {
+        acExitActiveMode();
+    }
     uint8_t payload[2];
     uint32_t const downlink = LMIC_Compliance.downlinkCount;
 
@@ -735,6 +781,8 @@ static void acSendUplink(void) {
 }
 
 static void sendUplinkCompleteCb(void *pUserData, int fSuccess) {
+    ESP_LOGI(TAG, "Compliance uplink complete\n");
+
     LMIC_API_PARAMETER(pUserData);
     LMIC_API_PARAMETER(fSuccess);
     LMIC_Compliance.eventflags |= LMIC_COMPLIANCE_EVENT_UPLINK_COMPLETE;
@@ -743,6 +791,8 @@ static void sendUplinkCompleteCb(void *pUserData, int fSuccess) {
 }
 
 static void acSendUplinkBuffer(void) {
+    ESP_LOGI(TAG, "Uplink Buffer\n");
+
     // send uplink data.
     lmic_tx_error_t const eSend =
         LMIC_sendWithCallback_strict(
@@ -768,4 +818,26 @@ static void acSendUplinkBuffer(void) {
 
 const char *LMICcompliance_txSuccessToString(int fSuccess) {
     return fSuccess ? "ok" : "failed";
+}
+
+
+static void evLinkCheckReqCommand() {
+    uint8_t cmd = MCMD_LinkCheckReq;
+    if (LMIC.pendMacPiggyback) {
+        // put in pendMacData
+        if (LMIC.pendMacLen < sizeof(LMIC.pendMacData)) {
+            LMIC.pendMacData[LMIC.pendMacLen++] = cmd;
+        } else {
+            return;
+        }
+    } else {
+        // put in pendTxData
+        if (LMIC.pendMacLen < sizeof(LMIC.pendTxData)) {
+            LMIC.pendTxData[LMIC.pendMacLen++] = cmd;
+        } else {
+            return;
+        }
+    }
+
+    fsmEvalDeferred();
 }

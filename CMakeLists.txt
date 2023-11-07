@@ -13,6 +13,7 @@ set(COMPONENT_REQUIRES
     driver
     esp_event
     esp_timer
+    ulp
 )
 
 register_component()

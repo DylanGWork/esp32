@@ -814,6 +814,7 @@ extern "C"
     /**
      * @}
      */
+    static int retransmit_counter;
 
 #ifdef __cplusplus
 }

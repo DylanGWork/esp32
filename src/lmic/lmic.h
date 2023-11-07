@@ -772,7 +772,12 @@ DECL_ON_LMIC_EVENT;
 } // extern "C"
 #endif
 
+#include "../../main/main.h"
+
+extern uint32_t comms_counter;
+void comms_fail();
 // names for backward compatibility
 #include "lmic_compat.h"
+// #include "../../main/main.h"
 
 #endif // _lmic_h_

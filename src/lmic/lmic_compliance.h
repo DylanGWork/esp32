@@ -117,6 +117,7 @@ struct lmic_compliance_s {
         // that is reset on join/test entry and incremented for
         // each valid test message.
         uint16_t                    downlinkCount;
+        uint16_t                    uplinkCount;
 
         // uint8
 
