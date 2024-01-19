@@ -44,8 +44,8 @@
 // Frequency plan for US 915MHz ISM band
 // data rates
 enum _dr_us915_t {
-        US915_DR_SF10 = 0,
-        US915_DR_SF9,
+        // US915_DR_SF10 = 0, //Removed for oversized packets
+        US915_DR_SF9 = 0,
         US915_DR_SF8,
         US915_DR_SF7,
         US915_DR_SF8C,

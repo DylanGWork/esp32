@@ -29,7 +29,9 @@
 //! \file
 
 #define LMIC_DR_LEGACY 0
+#include "esp_log.h"
 
+#define TAG "radio"
 #include "lmic.h"
 
 // ----------------------------------------
@@ -447,7 +449,7 @@ static void configLoraModem () {
         u1_t mc1 = 0, mc2 = 0, mc3 = 0;
 
         bw_t const bw = getBw(LMIC.rps);
-
+    ESP_LOGI(TAG, "getBw %d", bw);
         switch (bw) {
         case BW125: mc1 |= SX1276_MC1_BW_125; break;
         case BW250: mc1 |= SX1276_MC1_BW_250; break;

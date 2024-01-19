@@ -38,7 +38,7 @@
 
 CONST_TABLE(u1_t, _DR2RPS_CRC)[] = {
         ILLEGAL_RPS,				// [-1]
-        MAKERPS(SF10, BW125, CR_4_5, 0, 0),	// [0]
+        ILLEGAL_RPS, //MAKERPS(SF10, BW125, CR_4_5, 0, 0),	// [0]  MAKERPS(SF10, BW125, CR_4_5, 0, 0)
         MAKERPS(SF9 , BW125, CR_4_5, 0, 0),	// [1]
         MAKERPS(SF8 , BW125, CR_4_5, 0, 0),	// [2]
         MAKERPS(SF7 , BW125, CR_4_5, 0, 0),	// [3]

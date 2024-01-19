@@ -1780,12 +1780,16 @@ static bit_t processJoinAccept_nojoinframe(void) {
             comms_fail();
         }
         #endif
-    //    #if defined(CFG_us915)
-    //     if(comms_counter > 5){
-    //         comms_fail();
-    //     }
-    //     #endif
-        
+       #if defined(CFG_us915)
+        if(comms_counter > 5){
+            comms_fail();
+        }
+        #endif
+        #if defined(CFG_as923)
+        if(comms_counter > 5){
+            comms_fail();
+        }
+        #endif
 
 /* End Custome code*/
         return 1;
@@ -3224,7 +3228,7 @@ void comms_fail(){
     rtc_gpio_set_level(Membrane_LED_Red,1);
     // setup_ulp();
     init_ulp_program();
-    ulp_counter_state_for_ULP = 720000000;
+    ulp_counter_state_for_ULP = 19998000;
     ulp_state = 10;
     ulp_LED_state = 10;
     state = 10;

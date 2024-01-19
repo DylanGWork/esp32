@@ -69,7 +69,7 @@ enum {
 };
 enum {
         AS923_JP_TX_EIRP_MAX_DBM = 13,  // 13 dBm = 19.95mW < 20mW
-        AS923_TX_EIRP_MAX_DBM = 16      // 16 dBm
+        AS923_TX_EIRP_MAX_DBM = 30      // 16 dBm
 };
 enum { DR_PAGE_AS923 = 0x10 * (LMIC_REGION_as923 - 1) };
 

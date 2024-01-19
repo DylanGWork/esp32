@@ -31,7 +31,7 @@
 
 // preconditions for lmic_us_like.h
 #define LMICuslike_getFirst500kHzDR()   (LORAWAN_DR4)
-#define LMICuslike_getJoin125kHzDR()    (LORAWAN_DR0)
+#define LMICuslike_getJoin125kHzDR()    (LORAWAN_DR2) // Was DR0, reduced to DR1 due to packet sizes
 
 #ifndef _lmic_us_like_h_
 # include "lmic_us_like.h"
@@ -49,7 +49,7 @@ ostime_t LMICus915_dr2hsym(uint8_t dr);
 #define dr2hsym(dr) LMICus915_dr2hsym(dr)
 
 
-#define LMICbandplan_getInitialDrJoin() (LORAWAN_DR0)
+#define LMICbandplan_getInitialDrJoin() (LORAWAN_DR1) // Was DR0, reduced to DR1 due to packet sizes
 
 void LMICus915_setBcnRxParams(void);
 #define LMICbandplan_setBcnRxParams() LMICus915_setBcnRxParams()
