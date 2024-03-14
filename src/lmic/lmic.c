@@ -1760,7 +1760,7 @@ static bit_t processJoinAccept_nojoinframe(void) {
         // stop this join process.
 /*Custom code by Dylan to add Communication failure in the Join Process */
         comms_counter++;
-        ESP_LOGI(TAG, "comms_counter %d \n", comms_counter);
+        ESP_LOGI(TAG, "comms_counter %d, LMIC.datarate %d \n", comms_counter, LMIC.datarate);
         #if defined(CFG_au915)
         if(comms_counter > 5){
             comms_fail();
@@ -1774,14 +1774,16 @@ static bit_t processJoinAccept_nojoinframe(void) {
                 #if defined(CFG_eu868)
                 LMIC.txpow = 14;
                 #endif
-         } 
-        if(comms_counter > 1){
+            } 
+        if(comms_counter > 1)
+        {
             ESP_LOGI(TAG, "comms failing %d \n", comms_counter);
             comms_fail();
         }
         #endif
        #if defined(CFG_us915)
-        if(comms_counter > 5){
+        if(comms_counter > 5)
+        {
             comms_fail();
         }
         #endif

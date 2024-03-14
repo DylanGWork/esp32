@@ -36,6 +36,8 @@ typedef enum
     TTN_WAITING_FOR_TRANSMISSION
 } ttn_waiting_reason_t;
 
+// extern ttn_waiting_reason_t waiting_reason;
+
 /**
  * @brief Event type
  */
@@ -64,7 +66,7 @@ static bool is_started;
 static bool has_joined;
 static QueueHandle_t lmic_event_queue;
 static ttn_message_cb message_callback;
-static ttn_waiting_reason_t waiting_reason;
+ttn_waiting_reason_t waiting_reason;
 static ttn_rf_settings_t last_rf_settings[4];
 static ttn_rx_tx_window_t current_rx_tx_window;
 static int subband = 2;
@@ -123,6 +125,8 @@ void start(void)
 
     LMIC_setClockError(MAX_CLOCK_ERROR * 4 / 100);
     waiting_reason = TTN_WAITING_NONE;
+    lora_state_tracker = waiting_reason;
+
     hal_esp32_leave_critical_section();
 
     lmic_event_queue = xQueueCreate(4, sizeof(ttn_lmic_event_t));
@@ -140,6 +144,8 @@ void stop(void)
     LMIC_shutdown();
     hal_esp32_stop_lmic_task();
     waiting_reason = TTN_WAITING_NONE;
+    lora_state_tracker = waiting_reason;
+
     hal_esp32_leave_critical_section();
 }
 
@@ -299,6 +305,7 @@ bool join_core(void)
     xQueueReset(lmic_event_queue);
 
     waiting_reason = TTN_WAITING_FOR_JOIN;
+    lora_state_tracker = waiting_reason;
 
 
     config_rf_params();
@@ -318,8 +325,44 @@ bool join_core(void)
     return has_joined;
 }
 
+
+// volatile int button_pressed_lora = -1;
+
+// static void IRAM_ATTR button_isr_handler(void* arg) 
+// {
+//     // This function will be called when the button is pressed.
+//     // You can put your code here.
+//     // ESP_ERROR_CHECK(i2c_driver_delete(I2C_MASTER_NUM));
+//     // ESP_LOGI(TAG, "I2C de-initialized successfully");
+//     // state = 0;
+//     // vTaskDelete(NULL);
+//     // vTaskDelay(10);
+//     button_pressed_lora = (int)arg;
+
+//     ets_printf("Button pressed! %d\n", (int)arg);
+
+// }
+
+
 ttn_response_code_t ttn_transmit_message(const uint8_t *payload, size_t length, ttn_port_t port, bool confirm)
 {
+    // gpio_config_t io_conf;
+    // //interrupt on both edges
+    // io_conf.intr_type = GPIO_PIN_INTR_ANYEDGE;
+    // //bit mask of the pins
+    // io_conf.pin_bit_mask = service_noimpact;
+    // //set as input mode
+    // io_conf.mode = GPIO_MODE_INPUT;
+    // //enable pull-up mode
+    // io_conf.pull_up_en = 1;
+    // gpio_config(&io_conf);
+
+    // //install gpio isr service
+    // gpio_install_isr_service(0);
+    // //hook isr handler for specific gpio pin
+    // gpio_isr_handler_add(19, button_isr_handler, (void*) 19);
+    // gpio_isr_handler_add(6, button_isr_handler, (void*) 6);
+
     hal_esp32_enter_critical_section();
     if (waiting_reason != TTN_WAITING_NONE || (LMIC.opmode & OP_TXRXPEND) != 0)
     {
@@ -329,16 +372,32 @@ ttn_response_code_t ttn_transmit_message(const uint8_t *payload, size_t length, 
     }
 
     waiting_reason = TTN_WAITING_FOR_TRANSMISSION;
+    lora_state_tracker = waiting_reason;
+
     LMIC.client.txMessageCb = message_transmitted_callback;
     LMIC.client.txMessageUserData = NULL;
     LMIC_setTxData2(port, (xref2u1_t)payload, length, confirm);
     hal_esp32_wake_up();
+    ESP_LOGI(TAG, "381:\n");
+
     hal_esp32_leave_critical_section();
+    ESP_LOGI(TAG, "382:\n");
     while (true)
     {
-        ttn_lmic_event_t result;
-        xQueueReceive(lmic_event_queue, &result, portMAX_DELAY);
+        // printf("button_pressed_lora %d", button_pressed_lora);
+        // if(button_pressed_lora == 6)
+        // {
 
+        //     // ttn_prepare_for_deep_sleep();
+        //     turning_off();
+        //     printf("Turn off called, transmit failed\n");
+        //     return TTN_ERROR_TRANSMISSION_FAILED;
+        //     // vTaskDelay(pdTICKS_TO_MS(3000));
+        // }
+        ttn_lmic_event_t result;
+        ESP_LOGI(TAG, "397:\n");
+        xQueueReceive(lmic_event_queue, &result, portMAX_DELAY);
+        ESP_LOGI(TAG, "399:\n");
         switch (result.event)
         {
         case TTN_EVENT_MESSAGE_RECEIVED:
@@ -544,7 +603,7 @@ void event_callback(void *user_data, ev_t event)
         ttn_event_t ttn_event = TTN_EVENT_NONE;
 
 //    ESP_LOGI(TAG, "events test %s, %d", event_names[event], retransmit_counter);
-    if(retransmit_counter > 3)
+    if(retransmit_counter > 3 || LMIC.datarate == 0)
     {
         #if defined(CFG_eu868)
         interrupts_service_no_impact();
@@ -566,11 +625,28 @@ void event_callback(void *user_data, ev_t event)
         rtc_gpio_set_level(Membrane_LED_Yellow,0);
         ULP_Var_reset();
         ESP_LOGI(TAG, "ttn_event %d, waiting_reason %d \n", ttn_event, waiting_reason);
+        lora_state_tracker = waiting_reason;
 
         ESP_ERROR_CHECK( esp_sleep_enable_ulp_wakeup());
         esp_deep_sleep_start();
         #endif
         #if defined(CFG_au915)
+        if(state == 0 || state == 1)
+        {
+            // ulp_counter_state_for_ULP = 19998000;
+            // ulp_state = 10;
+            // ulp_LED_state = 10;
+            // state = 10;
+            // interrupts_baiting();
+            // setup_ulp();
+            ESP_LOGI(TAG, "Too many, try again later \n");
+            // ttn_prepare_for_deep_sleep();
+            // vTaskDelay(10);
+            // ESP_ERROR_CHECK( esp_sleep_enable_ulp_wakeup());
+            // esp_deep_sleep_start();
+
+        }
+        
         //nothing
         #endif
 
@@ -594,6 +670,8 @@ void event_callback(void *user_data, ev_t event)
 
     ttn_lmic_event_t result = {.event = ttn_event};
     waiting_reason = TTN_WAITING_NONE;
+    lora_state_tracker = waiting_reason;
+
     xQueueSend(lmic_event_queue, &result, pdMS_TO_TICKS(100));
 }
 
@@ -625,6 +703,8 @@ void message_received_callback(void *user_data, uint8_t port, const uint8_t *mes
 void message_transmitted_callback(void *user_data, int success)
 {
     waiting_reason = TTN_WAITING_NONE;
+    lora_state_tracker = waiting_reason;
+
     ttn_lmic_event_t result = {.event = success ? TTN_EVENT_TRANSMISSION_COMPLETED : TTN_EVENT_TRANSMISSION_FAILED};
     xQueueSend(lmic_event_queue, &result, pdMS_TO_TICKS(100));
 }

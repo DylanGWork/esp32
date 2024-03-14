@@ -24,6 +24,7 @@
 extern "C"
 {
 #endif
+extern uint32_t lora_state_tracker;
 
 /**
  * @addtogroup c_api
