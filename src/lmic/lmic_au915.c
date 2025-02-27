@@ -260,7 +260,7 @@ void LMICau915_updateTx(ostime_t txbeg) {
         if (chnl < 64) {
                 LMIC.freq = AU915_125kHz_UPFBASE + chnl*AU915_125kHz_UPFSTEP;
         } else {
-                ASSERT(chnl < 64 + 8);
+                // ASSERT(chnl < 64 + 8);
                 LMIC.freq = AU915_500kHz_UPFBASE + (chnl - 64)*AU915_500kHz_UPFSTEP;
         }
 

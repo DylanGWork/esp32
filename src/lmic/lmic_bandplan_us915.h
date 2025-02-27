@@ -31,7 +31,7 @@
 
 // preconditions for lmic_us_like.h
 #define LMICuslike_getFirst500kHzDR()   (LORAWAN_DR4)
-#define LMICuslike_getJoin125kHzDR()    (LORAWAN_DR2) // Was DR0, reduced to DR1 due to packet sizes
+#define LMICuslike_getJoin125kHzDR()    (LORAWAN_DR1) // Was DR0, reduced to DR1 due to packet sizes
 
 #ifndef _lmic_us_like_h_
 # include "lmic_us_like.h"

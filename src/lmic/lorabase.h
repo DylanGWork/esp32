@@ -212,7 +212,7 @@ enum {
 
 # if LMIC_DR_LEGACY
 enum _dr_configured_t {
-        // DR_SF10   = US915_DR_SF10, //Removed due to oversized packets
+        DR_SF10   = US915_DR_SF10, //Removed due to oversized packets
         DR_SF9    = US915_DR_SF9,
         DR_SF8    = US915_DR_SF8,
         DR_SF7    = US915_DR_SF7,

@@ -570,10 +570,10 @@ void event_callback(void *user_data, ev_t event)
                 ESP_LOGI(TAG, "Re-transmitting for confirmed");
                 LMIC.datarate = 0;
                 #if defined(CFG_eu868)
-                LMIC.txpow = 14;
+                LMIC.txpow = 16;
                 #endif
                 #if defined(CFG_au915)
-                LMIC.txpow = 28;
+                LMIC.txpow = 20;
                 #endif
 
             } 
@@ -584,7 +584,7 @@ void event_callback(void *user_data, ev_t event)
         {
             current_rx_tx_window = TTN_WINDOW_RX2;
             save_rf_settings(&last_rf_settings[TTN_WINDOW_RX2]);
-            ESP_LOGI(TAG, "What happens here line 514 SF: %d LMIC.txpow: %d, lbt_dbmax: %d, LMIC.adrTxPow: %d \n", LMIC.datarate, LMIC.txpow, LMIC.lbt_dbmax, LMIC.adrTxPow);
+            ESP_LOGI(TAG, "What happens here line 514 SF: %d LMIC.txpow: %d, lbt_dbmax: %d, LMIC.adrTxPow: %d , retransmit_counter: %d\n", LMIC.datarate, LMIC.txpow, LMIC.lbt_dbmax, LMIC.adrTxPow, retransmit_counter);
             retransmit_counter++;
         }
         break;
@@ -603,51 +603,71 @@ void event_callback(void *user_data, ev_t event)
         ttn_event_t ttn_event = TTN_EVENT_NONE;
 
 //    ESP_LOGI(TAG, "events test %s, %d", event_names[event], retransmit_counter);
-    if(retransmit_counter > 3 || LMIC.datarate == 0)
+    if(retransmit_counter > 2)
     {
         #if defined(CFG_eu868)
-        interrupts_service_no_impact();
-        setup_ulp();
+        ESP_LOGI(TAG, "Re-transmitting for downlink at MAX EU settings");
+        LMIC.datarate = 0;
+        LMIC.txpow = 16;
+        if(retransmit_counter > 4)
+        {
+        ESP_LOGI(TAG, "comms failing %d \n", retransmit_counter);
         ESP_LOGI(TAG, "Too many, try again later \n");
-        ttn_event = 0;
-        waiting_reason = 0;
-        LMIC.opmode = 0;
-        LMIC.datarate = 3;
-        if(state == 6 || state == 7)
+        if(state == 6 || state == 7 || state == 3 || state == 9 || state == 4)
         {
+            ESP_LOGI(TAG, "In field state, do not go into comms fail mode \n");
+
             state = 3;
+            interrupts_service_no_impact();
+            setup_ulp();
+            ttn_prepare_for_deep_sleep();
+            vTaskDelay(10);
+            ULP_Var_reset();
+            printf("state %d in fail\n", state);
+            ESP_ERROR_CHECK( esp_sleep_enable_ulp_wakeup());
+            esp_deep_sleep_start();
+        } else{
+            comms_fail();
         }
-        // vTaskDelete(LED_SEQUENCE);
-        ttn_prepare_for_deep_sleep();
-        vTaskDelay(10);
-        rtc_gpio_init(Membrane_LED_Yellow);
-        rtc_gpio_set_direction(Membrane_LED_Yellow, RTC_GPIO_MODE_OUTPUT_ONLY);
-        rtc_gpio_set_level(Membrane_LED_Yellow,0);
-        ULP_Var_reset();
         ESP_LOGI(TAG, "ttn_event %d, waiting_reason %d \n", ttn_event, waiting_reason);
-        lora_state_tracker = waiting_reason;
-
-        ESP_ERROR_CHECK( esp_sleep_enable_ulp_wakeup());
-        esp_deep_sleep_start();
-        #endif
-        #if defined(CFG_au915)
-        if(state == 0 || state == 1)
-        {
-            // ulp_counter_state_for_ULP = 19998000;
-            // ulp_state = 10;
-            // ulp_LED_state = 10;
-            // state = 10;
-            // interrupts_baiting();
-            // setup_ulp();
-            ESP_LOGI(TAG, "Too many, try again later \n");
-            // ttn_prepare_for_deep_sleep();
-            // vTaskDelay(10);
-            // ESP_ERROR_CHECK( esp_sleep_enable_ulp_wakeup());
-            // esp_deep_sleep_start();
-
         }
         
-        //nothing
+        #endif
+        #if defined(CFG_au915)
+        ESP_LOGI(TAG, "Re-transmitting for downlink at MAX AU settings");
+        LMIC.datarate = 0;
+        LMIC.txpow = 20;
+        if(retransmit_counter > 4)
+        {
+        ESP_LOGI(TAG, "comms failing %d \n", retransmit_counter);
+        ESP_LOGI(TAG, "Too many, try again later \n");
+        if(state == 6 || state == 7 || state == 3 || state == 9 || state == 4)
+        {
+            ESP_LOGI(TAG, "In field state, do not go into comms fail mode \n");
+            state = 3;
+        } else{
+            comms_fail();
+        }
+        ESP_LOGI(TAG, "ttn_event %d, waiting_reason %d \n", ttn_event, waiting_reason);
+        }
+        #endif
+        #if defined(CFG_us915)
+        ESP_LOGI(TAG, "Re-transmitting for downlink at MAX US settings");
+        LMIC.datarate = 0;
+        LMIC.txpow = 20;
+        if(retransmit_counter > 4)
+        {
+            ESP_LOGI(TAG, "comms failing %d \n", retransmit_counter);
+            ESP_LOGI(TAG, "Too many, try again later \n");
+        if(state == 6 || state == 7 || state == 3 || state == 9 || state == 4)
+        {
+            ESP_LOGI(TAG, "In field state, do not go into comms fail mode \n");
+            state = 3;
+        } else{
+            comms_fail();
+        }
+            ESP_LOGI(TAG, "ttn_event %d, waiting_reason %d \n", ttn_event, waiting_reason);
+        }
         #endif
 
     }

@@ -49,7 +49,7 @@ ostime_t LMICau915_dr2hsym(uint8_t dr);
 #define dr2hsym(dr) LMICau915_dr2hsym(dr)
 
 
-#define LMICbandplan_getInitialDrJoin() (LORAWAN_DR2)
+#define LMICbandplan_getInitialDrJoin() (LORAWAN_DR1)
 
 void LMICau915_initJoinLoop(void);
 #define LMICbandplan_initJoinLoop()     LMICau915_initJoinLoop()

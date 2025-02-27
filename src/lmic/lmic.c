@@ -1762,7 +1762,9 @@ static bit_t processJoinAccept_nojoinframe(void) {
         comms_counter++;
         ESP_LOGI(TAG, "comms_counter %d, LMIC.datarate %d \n", comms_counter, LMIC.datarate);
         #if defined(CFG_au915)
+        // LMIC.datarate = 0;
         if(comms_counter > 5){
+            
             comms_fail();
         }
         #endif
@@ -1772,7 +1774,7 @@ static bit_t processJoinAccept_nojoinframe(void) {
                 ESP_LOGI(TAG, "Re-transmitting for join");
                 LMIC.datarate = 0;
                 #if defined(CFG_eu868)
-                LMIC.txpow = 14;
+                LMIC.txpow = 16;
                 #endif
             } 
         if(comms_counter > 1)
@@ -3234,7 +3236,7 @@ void comms_fail(){
     ulp_state = 10;
     ulp_LED_state = 10;
     state = 10;
-
+    joined = 0;
     vTaskDelay(100);
     interrupts_service_no_impact();
     ESP_LOGI(TAG, "States: %d, %u", state, ulp_LED_state);    

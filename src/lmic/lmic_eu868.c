@@ -29,6 +29,9 @@
 #define LMIC_DR_LEGACY 0
 
 #include "lmic_bandplan.h"
+#include "esp_log.h"
+
+#define TAG "868band"
 
 #if defined(CFG_eu868)
 // ================================================================================
@@ -219,6 +222,7 @@ ostime_t LMICeu868_nextJoinTime(ostime_t time) {
         if ((s4_t) (time - LMIC.bands[BAND_MILLI].avail) < 0)
                 // yes: then wait until then.
                 time = LMIC.bands[BAND_MILLI].avail;
+                // ets_printf("time %d\n", time);
 
         return time;
 }
