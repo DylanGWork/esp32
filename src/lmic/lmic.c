@@ -1769,7 +1769,7 @@ static bit_t processJoinAccept_nojoinframe(void) {
         }
         #endif
         #if defined(CFG_eu868)
-        if(comms_counter > 0 && joined == 0)
+        if(comms_counter > 3 && joined == 0)
             {
                 ESP_LOGI(TAG, "Re-transmitting for join");
                 LMIC.datarate = 0;
@@ -1777,7 +1777,7 @@ static bit_t processJoinAccept_nojoinframe(void) {
                 LMIC.txpow = 16;
                 #endif
             } 
-        if(comms_counter > 1)
+        if(comms_counter > 4)
         {
             ESP_LOGI(TAG, "comms failing %d \n", comms_counter);
             comms_fail();

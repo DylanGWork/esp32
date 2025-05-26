@@ -618,14 +618,14 @@ void event_callback(void *user_data, ev_t event)
             ESP_LOGI(TAG, "In field state, do not go into comms fail mode \n");
 
             state = 3;
-            interrupts_service_no_impact();
-            setup_ulp();
-            ttn_prepare_for_deep_sleep();
-            vTaskDelay(10);
-            ULP_Var_reset();
-            printf("state %d in fail\n", state);
-            ESP_ERROR_CHECK( esp_sleep_enable_ulp_wakeup());
-            esp_deep_sleep_start();
+            // interrupts_service_no_impact();
+            // setup_ulp();
+            // ttn_prepare_for_deep_sleep();
+            // vTaskDelay(10);
+            // ULP_Var_reset();
+            // printf("state %d in fail\n", state);
+            // ESP_ERROR_CHECK( esp_sleep_enable_ulp_wakeup());
+            // esp_deep_sleep_start();
         } else{
             comms_fail();
         }

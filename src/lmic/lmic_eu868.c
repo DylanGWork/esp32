@@ -125,9 +125,9 @@ void LMICeu868_initDefaultChannels(bit_t join) {
                 LMIC.channelDrMap[fu] = DR_RANGE_MAP(EU868_DR_SF12, EU868_DR_SF7);
         }
 
-        (void) LMIC_setupBand(BAND_MILLI, 14 /* dBm */, 1000 /* 0.1% */);
-        (void) LMIC_setupBand(BAND_CENTI, 14 /* dBm */,  100 /* 1% */);
-        (void) LMIC_setupBand(BAND_DECI,  27 /* dBm */,   10 /* 10% */);
+        (void) LMIC_setupBand(BAND_MILLI, 14 /* dBm */, 1 /* 0.1% */);
+        (void) LMIC_setupBand(BAND_CENTI, 14 /* dBm */,  1 /* 1% */);
+        (void) LMIC_setupBand(BAND_DECI,  27 /* dBm */,   1/* 10% */);
 }
 
 bit_t LMIC_setupBand(u1_t bandidx, s1_t txpow, u2_t txcap) {
@@ -136,7 +136,7 @@ bit_t LMIC_setupBand(u1_t bandidx, s1_t txpow, u2_t txcap) {
         xref2band_t b = &LMIC.bands[bandidx];
         b->txpow = txpow;
         b->txcap = txcap;
-        b->avail = os_getTime();
+        b->avail = 0;//os_getTime();
         b->lastchnl = os_getRndU1() % MAX_CHANNELS;
         return 1;
 }
@@ -224,7 +224,7 @@ ostime_t LMICeu868_nextJoinTime(ostime_t time) {
                 time = LMIC.bands[BAND_MILLI].avail;
                 // ets_printf("time %d\n", time);
 
-        return time;
+        return 0;
 }
 
 ///
@@ -331,7 +331,7 @@ ostime_t LMICeu868_nextTx(ostime_t now) {
                 // most recent one.
                 LMIC.txChnl = candidateCh;
         }
-        return mintime;
+        return 0;
 }
 
 
