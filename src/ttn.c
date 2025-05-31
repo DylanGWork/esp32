@@ -125,7 +125,7 @@ void start(void)
 
     LMIC_setClockError(MAX_CLOCK_ERROR * 4 / 100);
     waiting_reason = TTN_WAITING_NONE;
-    lora_state_tracker = waiting_reason;
+    // lora_state_tracker = waiting_reason;
 
     hal_esp32_leave_critical_section();
 
@@ -144,7 +144,7 @@ void stop(void)
     LMIC_shutdown();
     hal_esp32_stop_lmic_task();
     waiting_reason = TTN_WAITING_NONE;
-    lora_state_tracker = waiting_reason;
+    // lora_state_tracker = waiting_reason;
 
     hal_esp32_leave_critical_section();
 }
@@ -305,7 +305,7 @@ bool join_core(void)
     xQueueReset(lmic_event_queue);
 
     waiting_reason = TTN_WAITING_FOR_JOIN;
-    lora_state_tracker = waiting_reason;
+    // lora_state_tracker = waiting_reason;
 
 
     config_rf_params();
@@ -372,7 +372,7 @@ ttn_response_code_t ttn_transmit_message(const uint8_t *payload, size_t length, 
     }
 
     waiting_reason = TTN_WAITING_FOR_TRANSMISSION;
-    lora_state_tracker = waiting_reason;
+    // lora_state_tracker = waiting_reason;
 
     LMIC.client.txMessageCb = message_transmitted_callback;
     LMIC.client.txMessageUserData = NULL;
@@ -395,7 +395,7 @@ ttn_response_code_t ttn_transmit_message(const uint8_t *payload, size_t length, 
         //     // vTaskDelay(pdTICKS_TO_MS(3000));
         // }
         ttn_lmic_event_t result;
-        ESP_LOGI(TAG, "397:\n");
+        ESP_LOGI(TAG, "397: %ld\n", portMAX_DELAY);
         xQueueReceive(lmic_event_queue, &result, portMAX_DELAY);
         ESP_LOGI(TAG, "399:\n");
         switch (result.event)
@@ -690,7 +690,7 @@ void event_callback(void *user_data, ev_t event)
 
     ttn_lmic_event_t result = {.event = ttn_event};
     waiting_reason = TTN_WAITING_NONE;
-    lora_state_tracker = waiting_reason;
+    // lora_state_tracker = waiting_reason;
 
     xQueueSend(lmic_event_queue, &result, pdMS_TO_TICKS(100));
 }
@@ -723,7 +723,7 @@ void message_received_callback(void *user_data, uint8_t port, const uint8_t *mes
 void message_transmitted_callback(void *user_data, int success)
 {
     waiting_reason = TTN_WAITING_NONE;
-    lora_state_tracker = waiting_reason;
+    // lora_state_tracker = waiting_reason;
 
     ttn_lmic_event_t result = {.event = success ? TTN_EVENT_TRANSMISSION_COMPLETED : TTN_EVENT_TRANSMISSION_FAILED};
     xQueueSend(lmic_event_queue, &result, pdMS_TO_TICKS(100));

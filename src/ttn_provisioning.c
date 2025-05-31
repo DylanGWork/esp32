@@ -364,8 +364,8 @@ bool ttn_provisioning_from_mac(const char *app_eui, const char *app_key)
     global_dev_eui[4] = mac[3];
     global_dev_eui[3] = mac[4];
     global_dev_eui[2] = mac[5];
-    global_dev_eui[1] = 0xFF; // 0-3 bits are Prod FW, 4-7 bits Prod HW
-    global_dev_eui[0] = 0xFF; // 0-3 bits are for Model (Predictor series, Mouse, PIR), 4-7 bits are spare??
+    global_dev_eui[1] = 0x00; // 0-3 bits are Prod FW, 4-7 bits Prod HW
+    global_dev_eui[0] = 0x00; // 0-3 bits are for Model (Predictor series, Mouse, PIR), 4-7 bits are spare??
 
     return decode(false, NULL, app_eui, app_key);
 }

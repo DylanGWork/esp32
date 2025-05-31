@@ -279,8 +279,10 @@ static void evMessage(
         }
         case LORAWAN_COMPLIANCE_CMD_ACTIVATE: {
             if (isActivateMessage(pMessage, nMessage))
+            {
                 evActivate();
                 ESP_LOGW(TAG, "Activate line 279\n");
+            }
             break;
         }
         case LORAWAN_COMPLIANCE_CMD_SET_CONFIRM: {
@@ -640,8 +642,10 @@ fsmDispatch(
 
         case LMIC_COMPLIANCE_FSMSTATE_ECHOING: {
             if (fEntry)
+            {
                 acSendUplinkBuffer();
                 ESP_LOGI(TAG, "Line 623\n");
+            }
             if (eventflags_TestAndClear(LMIC_COMPLIANCE_EVENT_UPLINK_COMPLETE)) {
                 newState = LMIC_COMPLIANCE_FSMSTATE_RECOVERY;
             }
@@ -650,8 +654,10 @@ fsmDispatch(
 
         case LMIC_COMPLIANCE_FSMSTATE_REPORTING: {
             if (fEntry)
+            {
                 ESP_LOGI(TAG, "Line 632\n");
                 acSendUplink();
+            }
 
             if (eventflags_TestAndClear(LMIC_COMPLIANCE_EVENT_UPLINK_COMPLETE)) {
                 newState = LMIC_COMPLIANCE_FSMSTATE_RECOVERY;

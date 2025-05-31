@@ -1760,7 +1760,7 @@ static bit_t processJoinAccept_nojoinframe(void) {
         // stop this join process.
 /*Custom code by Dylan to add Communication failure in the Join Process */
         comms_counter++;
-        ESP_LOGI(TAG, "comms_counter %d, LMIC.datarate %d \n", comms_counter, LMIC.datarate);
+        // ESP_LOGI(TAG, "comms_counter %d, LMIC.datarate %d \n", comms_counter, LMIC.datarate);
         #if defined(CFG_au915)
         // LMIC.datarate = 0;
         if(comms_counter > 5){
@@ -1769,7 +1769,7 @@ static bit_t processJoinAccept_nojoinframe(void) {
         }
         #endif
         #if defined(CFG_eu868)
-        if(comms_counter > 0 && joined == 0)
+        if(comms_counter > 2 && joined == 0)
             {
                 ESP_LOGI(TAG, "Re-transmitting for join");
                 LMIC.datarate = 0;
@@ -1777,9 +1777,9 @@ static bit_t processJoinAccept_nojoinframe(void) {
                 LMIC.txpow = 16;
                 #endif
             } 
-        if(comms_counter > 1)
+        if(comms_counter > 3)
         {
-            ESP_LOGI(TAG, "comms failing %d \n", comms_counter);
+            ESP_LOGI(TAG, "comms failing %ld \n", comms_counter);
             comms_fail();
         }
         #endif
@@ -3239,9 +3239,9 @@ void comms_fail(){
     joined = 0;
     vTaskDelay(100);
     interrupts_service_no_impact();
-    ESP_LOGI(TAG, "States: %d, %u", state, ulp_LED_state);    
+    // ESP_LOGI(TAG, "States: %d, %u", state, ulp_LED_state);    
 
     ESP_ERROR_CHECK( esp_sleep_enable_ulp_wakeup()); 
     esp_deep_sleep_start();
-    ESP_LOGI(TAG, "should not see this");
+    // ESP_LOGI(TAG, "should not see this");
 }

@@ -14,6 +14,7 @@ set(COMPONENT_REQUIRES
     esp_event
     esp_timer
     ulp
+    PS_WiFi
 )
 
 register_component()

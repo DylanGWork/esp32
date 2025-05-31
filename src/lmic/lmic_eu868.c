@@ -224,7 +224,7 @@ ostime_t LMICeu868_nextJoinTime(ostime_t time) {
                 time = LMIC.bands[BAND_MILLI].avail;
                 // ets_printf("time %d\n", time);
 
-        return time;
+        return 0;
 }
 
 ///
@@ -248,7 +248,7 @@ ostime_t LMICeu868_nextJoinTime(ostime_t time) {
 ///     remain set in the shuffle mask if appropriate.
 ///
 ostime_t LMICeu868_nextTx(ostime_t now) {
-        ostime_t mintime = now + /*8h*/sec2osticks(28800);
+        ostime_t mintime = now + /*8h*/sec2osticks(0);
         u2_t availMap;
         u2_t feasibleMap;
         u1_t bandMap;
@@ -331,7 +331,7 @@ ostime_t LMICeu868_nextTx(ostime_t now) {
                 // most recent one.
                 LMIC.txChnl = candidateCh;
         }
-        return mintime;
+        return 0;
 }
 
 
