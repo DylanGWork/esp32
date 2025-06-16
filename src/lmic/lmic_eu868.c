@@ -124,10 +124,10 @@ void LMICeu868_initDefaultChannels(bit_t join) {
                 // TODO(tmm@mcci.com): don't use EU DR directly, use something from the LMIC context or a static const
                 LMIC.channelDrMap[fu] = DR_RANGE_MAP(EU868_DR_SF12, EU868_DR_SF7);
         }
-
-        (void) LMIC_setupBand(BAND_MILLI, 14 /* dBm */, 1 /* 0.1% */);
-        (void) LMIC_setupBand(BAND_CENTI, 14 /* dBm */,  1 /* 1% */);
-        (void) LMIC_setupBand(BAND_DECI,  27 /* dBm */,   1/* 10% */);
+        LMIC_DEBUG_PRINTF("duty cycle area 127\n");
+        (void) LMIC_setupBand(BAND_MILLI, 14 /* dBm */, 1000 /* 0.1% */);
+        (void) LMIC_setupBand(BAND_CENTI, 14 /* dBm */,  100 /* 1% */);
+        (void) LMIC_setupBand(BAND_DECI,  27 /* dBm */,   10/* 10% */);
 }
 
 bit_t LMIC_setupBand(u1_t bandidx, s1_t txpow, u2_t txcap) {
