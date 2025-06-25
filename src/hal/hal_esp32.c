@@ -307,9 +307,9 @@ int64_t os_time_to_esp_time(int64_t esp_now, uint32_t os_time)
     return esp_time;
 }
 
-int64_t get_current_time()
+int64_t IRAM_ATTR get_current_time()
 {
-    return esp_timer_get_time() + time_offset;
+    return esp_timer_get_time() + time_offset + 34202616800;
 }
 
 void init_timer(void)
@@ -450,6 +450,7 @@ u4_t IRAM_ATTR hal_ticks(void)
 // All other events are ignored and will be served later.
 u4_t hal_waitUntil(u4_t time)
 {
+    LMIC_DEBUG_PRINTF("Waiting Until something\n");
     int64_t esp_now = get_current_time();
     int64_t esp_time = os_time_to_esp_time(esp_now, time);
     set_next_alarm(esp_time);
