@@ -138,7 +138,7 @@ void LMICeulike_initJoinLoop(uint8_t nDefaultChannels, s1_t adrTxPow) {
         LMICcore_setDrJoin(DRCHG_SET, LMICbandplan_getInitialDrJoin());
         LMICbandplan_initDefaultChannels(/* put into join mode */ 1);
         ASSERT((LMIC.opmode & OP_NEXTCHNL) == 0);
-        LMIC.txend = os_getTime() + LMICcore_rndDelay(8);
+        LMIC.txend = 0;//os_getTime() + LMICcore_rndDelay(8);
 }
 #endif // DISABLE_JOIN
 
@@ -214,14 +214,14 @@ ostime_t LMICeulike_nextJoinState(uint8_t nDefaultChannels) {
         // See https://github.com/mcci-catena/arduino-lmic/issues/2
         // Current code doesn't match LoRaWAN 1.0.2 requirements.
 
-        LMIC.txend = time +
-                (isTESTMODE()
+        LMIC.txend = 0;//time +
+               // (isTESTMODE()
                         // Avoid collision with JOIN ACCEPT @ SF12 being sent by GW (but we missed it)
-                        ? DNW2_SAFETY_ZONE
+                 //       ? DNW2_SAFETY_ZONE
                         // Otherwise: randomize join (street lamp case):
                         // SF12:255, SF11:127, .., SF7:8secs
 			//
-                        : DNW2_SAFETY_ZONE + LMICcore_rndDelay(255 >> LMIC.datarate));
+                 //       : DNW2_SAFETY_ZONE + LMICcore_rndDelay(255 >> LMIC.datarate));
         // 1 - triggers EV_JOIN_FAILED event
         return failed;
 }

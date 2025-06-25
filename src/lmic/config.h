@@ -116,7 +116,7 @@
 
 // define these in lmic_project_config.h to disable the corresponding MAC commands.
 // Class A
-//#define DISABLE_MCMD_DutyCycleReq // duty cycle cap
+// #define DISABLE_MCMD_DutyCycleReq // duty cycle cap
 //#define DISABLE_MCMD_RXParamSetupReq // 2nd DN window param
 //#define DISABLE_MCMD_NewChannelReq // set new channel
 //#define DISABLE_MCMD_DlChannelReq // set downlink channel for RX1 for given uplink channel.

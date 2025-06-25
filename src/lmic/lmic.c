@@ -996,6 +996,7 @@ scan_mac_cmds(
         case MCMD_DutyCycleReq: {
             u1_t cap = opts[oidx+1];
             LMIC.globalDutyRate  = cap & 0xF;
+            ESP_LOGI(TAG, "999:\n");
             LMIC.globalDutyAvail = os_getTime();
             DO_DEVDB(cap,dutyCap);
 
@@ -1753,6 +1754,7 @@ static bit_t processJoinAccept_nojoinframe(void) {
         // claimed to return a delay but really returns 0 or 1.
         // Once we update as923 to return failed after dr2, we
         // can take out this #if.
+        ESP_LOGI(TAG, "1757:\n");
         os_setTimedCallback(&LMIC.osjob, os_getTime()+failed,
                             failed
                             ? FUNC_ADDR(onJoinFailed)      // one JOIN iteration done and failed
@@ -1760,7 +1762,7 @@ static bit_t processJoinAccept_nojoinframe(void) {
         // stop this join process.
 /*Custom code by Dylan to add Communication failure in the Join Process */
         comms_counter++;
-        // ESP_LOGI(TAG, "comms_counter %d, LMIC.datarate %d \n", comms_counter, LMIC.datarate);
+        ESP_LOGI(TAG, "comms_counter %ld, LMIC.datarate %d \n", comms_counter, LMIC.datarate);
         #if defined(CFG_au915)
         // LMIC.datarate = 0;
         if(comms_counter > 5){
@@ -1769,7 +1771,7 @@ static bit_t processJoinAccept_nojoinframe(void) {
         }
         #endif
         #if defined(CFG_eu868)
-        if(comms_counter > 2 && joined == 0)
+        if(comms_counter > 3 && joined == 0)
             {
                 ESP_LOGI(TAG, "Re-transmitting for join");
                 LMIC.datarate = 0;
@@ -1777,7 +1779,7 @@ static bit_t processJoinAccept_nojoinframe(void) {
                 LMIC.txpow = 16;
                 #endif
             } 
-        if(comms_counter > 3)
+        if(comms_counter > 4)
         {
             ESP_LOGI(TAG, "comms failing %ld \n", comms_counter);
             comms_fail();
@@ -1860,6 +1862,7 @@ static void processRx2DnData (xref2osjob_t osjob) {
         // BUG(tmm@mcci.com) this delay is not needed for some
         // regions, e.g. US915 and AU915, which have non-overlapping
         // uplink and downlink.
+        ESP_LOGI(TAG, "1865:\n");
         txDelay(os_getTime() + DNW2_SAFETY_ZONE, 2);
     }
     processDnData();
@@ -2370,6 +2373,7 @@ static bit_t processDnData_norx(void) {
         if (LMIC.upRepeatCount < LMIC.upRepeat) {
             LMICOS_logEventUint32("processDnData: repeat", (LMIC.upRepeat<<8u) | (LMIC.upRepeatCount<<0u));
             LMIC.upRepeatCount += 1;
+            ESP_LOGI(TAG, "2376:\n");
             txDelay(os_getTime() + ms2osticks(LMICbandplan_TX_RECOVERY_ms), 0);
             LMIC.opmode &= ~OP_TXRXPEND;
             engineUpdate();
@@ -2418,6 +2422,7 @@ static bit_t processDnData_txcomplete(void) {
     // so that armies of identical devices will not try to talk all
     // at once. This is potentially band-specific, so we let it come
     // from the band-plan files.
+    ESP_LOGI(TAG, "2425:\n");
     txDelay(os_getTime() + ms2osticks(LMICbandplan_TX_RECOVERY_ms), 0);
 
 #if LMIC_ENABLE_DeviceTimeReq
@@ -2644,7 +2649,10 @@ static void engineUpdate_inner (void) {
         }
         // Delayed TX or waiting for duty cycle?
         if( (LMIC.globalDutyRate != 0 || (LMIC.opmode & OP_RNDTX) != 0)  &&  (txbeg - LMIC.globalDutyAvail) < 0 )
+        {
+            LMIC_DEBUG_PRINTF("LMIC.globalDutyAvail: %ld\n", LMIC.globalDutyAvail);
             txbeg = LMIC.globalDutyAvail;
+        }
 #if !defined(DISABLE_BEACONS)
         // If we're tracking a beacon...
         // then make sure TX-RX transaction is complete before beacon
@@ -3239,9 +3247,9 @@ void comms_fail(){
     joined = 0;
     vTaskDelay(100);
     interrupts_service_no_impact();
-    // ESP_LOGI(TAG, "States: %d, %u", state, ulp_LED_state);    
+    ESP_LOGI(TAG, "States: %d, %lu", state, ulp_LED_state);    
 
     ESP_ERROR_CHECK( esp_sleep_enable_ulp_wakeup()); 
     esp_deep_sleep_start();
-    // ESP_LOGI(TAG, "should not see this");
+    ESP_LOGI(TAG, "should not see this");
 }

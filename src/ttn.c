@@ -130,6 +130,7 @@ void start(void)
     hal_esp32_leave_critical_section();
 
     lmic_event_queue = xQueueCreate(4, sizeof(ttn_lmic_event_t));
+    ESP_LOGI(TAG, "133:\n");
     ASSERT(lmic_event_queue != NULL);
     hal_esp32_start_lmic_task();
     is_started = true;
@@ -343,6 +344,22 @@ bool join_core(void)
 
 // }
 
+/* 1.  map the event numbers to readable names once, near the top     */
+static const char *lmic_ev_name(uint8_t e)
+{
+    /* add entries you care about; unknown ones fall through */
+    switch (e) {
+        case EV_SCAN_TIMEOUT:   return "SCAN_TIMEOUT";
+        case EV_BEACON_FOUND:   return "BEACON_FOUND";
+        case EV_JOINING:        return "JOINING";
+        case EV_JOINED:         return "JOINED";
+        case EV_LINK_DEAD:      return "LINK_DEAD";
+        case EV_LINK_ALIVE:     return "LINK_ALIVE";
+        case EV_TXCOMPLETE:     return "TXCOMPLETE";
+        default:                return "UNKNOWN";
+    }
+}
+/* ------------------------------------------------------------------ */
 
 ttn_response_code_t ttn_transmit_message(const uint8_t *payload, size_t length, ttn_port_t port, bool confirm)
 {
@@ -395,8 +412,9 @@ ttn_response_code_t ttn_transmit_message(const uint8_t *payload, size_t length, 
         //     // vTaskDelay(pdTICKS_TO_MS(3000));
         // }
         ttn_lmic_event_t result;
-        ESP_LOGI(TAG, "397: %ld\n", portMAX_DELAY);
+        ESP_LOGI(TAG, "397:\n");
         xQueueReceive(lmic_event_queue, &result, portMAX_DELAY);
+    /* now ‘result’ is valid – print it in a human-readable form       */
         ESP_LOGI(TAG, "399:\n");
         switch (result.event)
         {
@@ -620,10 +638,12 @@ void event_callback(void *user_data, ev_t event)
             state = 3;
             interrupts_service_no_impact();
             setup_ulp();
+            waiting_reason = TTN_WAITING_NONE;
+            LMIC.opmode = OP_NONE;
             ttn_prepare_for_deep_sleep();
             vTaskDelay(10);
             ULP_Var_reset();
-            printf("state %d in fail\n", state);
+            // printf("state %d in fail\n", state);
             ESP_ERROR_CHECK( esp_sleep_enable_ulp_wakeup());
             esp_deep_sleep_start();
         } else{
@@ -714,6 +734,7 @@ void message_received_callback(void *user_data, uint8_t port, const uint8_t *mes
     } else {    //Required or any application layer downlink code will not be processed.
         ttn_lmic_event_t result = {
         .event = TTN_EVENT_MESSAGE_RECEIVED, .port = port, .message = message, .message_size = message_size};
+        ESP_LOGI(TAG, "737:\n");
         xQueueSend(lmic_event_queue, &result, pdMS_TO_TICKS(100));
         // printf("\033[38;5;202mLMIC Compliance message not process\033[0m\n");
     }
@@ -726,6 +747,7 @@ void message_transmitted_callback(void *user_data, int success)
     // lora_state_tracker = waiting_reason;
 
     ttn_lmic_event_t result = {.event = success ? TTN_EVENT_TRANSMISSION_COMPLETED : TTN_EVENT_TRANSMISSION_FAILED};
+    ESP_LOGI(TAG, "750:\n");
     xQueueSend(lmic_event_queue, &result, pdMS_TO_TICKS(100));
 }
 
