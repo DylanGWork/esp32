@@ -2649,6 +2649,7 @@ static void engineUpdate_inner (void) {
         }
         // Delayed TX or waiting for duty cycle?
         if( (LMIC.globalDutyRate != 0 || (LMIC.opmode & OP_RNDTX) != 0)  &&  (txbeg - LMIC.globalDutyAvail) < 0 )
+            LMIC_DEBUG_PRINTF("LMIC.globalDutyAvail: %d\n", LMIC.globalDutyAvail);
             txbeg = LMIC.globalDutyAvail;
 #if !defined(DISABLE_BEACONS)
         // If we're tracking a beacon...
@@ -3236,6 +3237,7 @@ void comms_fail(){
     rtc_gpio_set_direction(Membrane_LED_Red, RTC_GPIO_MODE_OUTPUT_ONLY);
     rtc_gpio_set_level(Membrane_LED_Red,1);
     // setup_ulp();
+    ttn_prepare_for_deep_sleep();
     init_ulp_program();
     ulp_counter_state_for_ULP = 19998000;
     ulp_state = 10;

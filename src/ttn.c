@@ -634,20 +634,25 @@ void event_callback(void *user_data, ev_t event)
         ESP_LOGI(TAG, "Too many, try again later \n");
         if(state == 6 || state == 7 || state == 3 || state == 9 || state == 4)
         {
-            ESP_LOGI(TAG, "In field state, do not go into comms fail mode \n");
-
-            state = 3;
+            ESP_LOGI(TAG, "In field state, do not go into comms fail mode \n");       
             interrupts_service_no_impact();
+            ESP_LOGI(TAG,"failed state that im checking3\n");
             setup_ulp();
+            state = 3;
+            ulp_state = 3;
             waiting_reason = TTN_WAITING_NONE;
             LMIC.opmode = OP_NONE;
             ttn_prepare_for_deep_sleep();
-            vTaskDelay(10);
+            ESP_LOGI(TAG,"failed state that im checking1\n");
+            vTaskDelay(50);
             ULP_Var_reset();
             // printf("state %d in fail\n", state);
+            ESP_LOGI(TAG,"failed state that im checking2\n");
             ESP_ERROR_CHECK( esp_sleep_enable_ulp_wakeup());
             esp_deep_sleep_start();
-        } else{
+            ESP_LOGI(TAG,"failed state that im checking4\n");
+
+        } else {
             comms_fail();
         }
         ESP_LOGI(TAG, "ttn_event %d, waiting_reason %d \n", ttn_event, waiting_reason);

@@ -125,9 +125,9 @@ void LMICeu868_initDefaultChannels(bit_t join) {
                 LMIC.channelDrMap[fu] = DR_RANGE_MAP(EU868_DR_SF12, EU868_DR_SF7);
         }
         LMIC_DEBUG_PRINTF("duty cycle area 127\n");
-        (void) LMIC_setupBand(BAND_MILLI, 14 /* dBm */, 1000 /* 0.1% */);
-        (void) LMIC_setupBand(BAND_CENTI, 14 /* dBm */,  100 /* 1% */);
-        (void) LMIC_setupBand(BAND_DECI,  27 /* dBm */,   10/* 10% */);
+        (void) LMIC_setupBand(BAND_MILLI, 14 /* dBm */, 1 /* 0.1% */); //CHANGED FROM 1000
+        (void) LMIC_setupBand(BAND_CENTI, 14 /* dBm */,  1 /* 1% */);//CHANGED FROM 100
+        (void) LMIC_setupBand(BAND_DECI,  27 /* dBm */,   1 /* 10% */); //CHANGED FROM 10
 }
 
 bit_t LMIC_setupBand(u1_t bandidx, s1_t txpow, u2_t txcap) {
@@ -248,7 +248,7 @@ ostime_t LMICeu868_nextJoinTime(ostime_t time) {
 ///     remain set in the shuffle mask if appropriate.
 ///
 ostime_t LMICeu868_nextTx(ostime_t now) {
-        ostime_t mintime = now + /*8h*/sec2osticks(28800);
+        ostime_t mintime = now + /*8h*/sec2osticks(28800); // 17/06/25: 28800 originally
         u2_t availMap;
         u2_t feasibleMap;
         u1_t bandMap;
@@ -331,7 +331,8 @@ ostime_t LMICeu868_nextTx(ostime_t now) {
                 // most recent one.
                 LMIC.txChnl = candidateCh;
         }
-        return 0;
+        LMIC_DEBUG_PRINTF("MINAIRTIME: %d \n", mintime);
+        return mintime; // 17/06/25: Originally changed to 0
 }
 
 
