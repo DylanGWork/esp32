@@ -584,12 +584,12 @@ void event_callback(void *user_data, ev_t event)
         if (current_rx_tx_window != TTN_WINDOW_RX1)
         {
 
-            if(retransmit_counter > 1 && joined == 1)
+            if(retransmit_counter > 4 && joined == 1)
             {
                 ESP_LOGI(TAG, "Re-transmitting for confirmed");
-                LMIC.datarate = 0;
+                // LMIC.datarate = 0;
                 #if defined(CFG_eu868)
-                LMIC.txpow = 16;
+                // LMIC.txpow = 16;
                 #endif
                 #if defined(CFG_au915)
                 LMIC.txpow = 20;

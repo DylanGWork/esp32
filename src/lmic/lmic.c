@@ -3242,6 +3242,7 @@ void comms_fail(){
     ulp_counter_state_for_ULP = 19998000;
     ulp_state = 10;
     ulp_LED_state = 10;
+    ulp_LED_Timer = 10000000 + 400000; //Buffer + 12 hours
     state = 10;
     joined = 0;
     vTaskDelay(100);
