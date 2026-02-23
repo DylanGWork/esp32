@@ -24,7 +24,7 @@
 extern "C"
 {
 #endif
-extern uint32_t lora_state_tracker;
+// extern uint32_t lora_state_tracker;
 
 /**
  * @addtogroup c_api
@@ -815,7 +815,7 @@ extern uint32_t lora_state_tracker;
     /**
      * @}
      */
-    static int retransmit_counter;
+    extern int retransmit_counter;
 
 #ifdef __cplusplus
 }

@@ -331,7 +331,7 @@ ostime_t LMICeu868_nextTx(ostime_t now) {
                 // most recent one.
                 LMIC.txChnl = candidateCh;
         }
-        LMIC_DEBUG_PRINTF("MINAIRTIME: %d \n", mintime);
+        LMIC_DEBUG_PRINTF("MINAIRTIME: %ld \n", mintime);
         return mintime; // 17/06/25: Originally changed to 0
 }
 

@@ -23,6 +23,8 @@
 
 #define TAG "ttn"
 
+int retransmit_counter = 0;
+
 #define DEFAULT_MAX_TX_POWER -1000
 extern TaskHandle_t LED_SEQUENCE;
 
@@ -63,7 +65,7 @@ typedef struct
 } ttn_lmic_event_t;
 
 static bool is_started;
-static bool has_joined;
+bool has_joined;
 static QueueHandle_t lmic_event_queue;
 static ttn_message_cb message_callback;
 ttn_waiting_reason_t waiting_reason;
@@ -125,7 +127,7 @@ void start(void)
 
     LMIC_setClockError(MAX_CLOCK_ERROR * 4 / 100);
     waiting_reason = TTN_WAITING_NONE;
-    lora_state_tracker = waiting_reason;
+    // lora_state_tracker = waiting_reason;
 
     hal_esp32_leave_critical_section();
 
@@ -145,7 +147,7 @@ void stop(void)
     LMIC_shutdown();
     hal_esp32_stop_lmic_task();
     waiting_reason = TTN_WAITING_NONE;
-    lora_state_tracker = waiting_reason;
+    // lora_state_tracker = waiting_reason;
 
     hal_esp32_leave_critical_section();
 }
@@ -232,8 +234,12 @@ bool ttn_resume_after_deep_sleep(void)
 {
     if (!ttn_provisioning_have_keys())
     {
+        ESP_LOGW(TAG, "Dev ttn_provisioning_have_keys ed");
         if (!ttn_provisioning_restore_keys(false))
+        {
+            ESP_LOGW(TAG, "Dev ttn_provisioning_restore_keys ed");
             return false;
+        }
     }
 
     if (!ttn_provisioning_have_keys())
@@ -306,7 +312,7 @@ bool join_core(void)
     xQueueReset(lmic_event_queue);
 
     waiting_reason = TTN_WAITING_FOR_JOIN;
-    lora_state_tracker = waiting_reason;
+    // lora_state_tracker = waiting_reason;
 
 
     config_rf_params();
@@ -345,7 +351,7 @@ bool join_core(void)
 // }
 
 /* 1.  map the event numbers to readable names once, near the top     */
-static const char *lmic_ev_name(uint8_t e)
+static __attribute__((unused)) const char *lmic_ev_name(uint8_t e)
 {
     /* add entries you care about; unknown ones fall through */
     switch (e) {
@@ -389,7 +395,7 @@ ttn_response_code_t ttn_transmit_message(const uint8_t *payload, size_t length, 
     }
 
     waiting_reason = TTN_WAITING_FOR_TRANSMISSION;
-    lora_state_tracker = waiting_reason;
+    // lora_state_tracker = waiting_reason;
 
     LMIC.client.txMessageCb = message_transmitted_callback;
     LMIC.client.txMessageUserData = NULL;
@@ -561,8 +567,8 @@ int ttn_rssi(void)
 
 // --- Callbacks ---
 
-#if CONFIG_LOG_DEFAULT_LEVEL >= 3 || LMIC_ENABLE_event_logging
-static const char *event_names[] = {LMIC_EVENT_NAME_TABLE__INIT};
+#if LMIC_ENABLE_event_logging
+static __attribute__((unused)) const char *event_names[] = {LMIC_EVENT_NAME_TABLE__INIT};
 #endif
 
 // Called by LMIC when an LMIC event (join, join failed, reset etc.) occurs
@@ -584,7 +590,7 @@ void event_callback(void *user_data, ev_t event)
         if (current_rx_tx_window != TTN_WINDOW_RX1)
         {
 
-            if(retransmit_counter > 1 && joined == 1)
+            if(retransmit_counter > 1 && has_joined == 1)
             {
                 ESP_LOGI(TAG, "Re-transmitting for confirmed");
                 LMIC.datarate = 0;
@@ -716,7 +722,7 @@ void event_callback(void *user_data, ev_t event)
 
     ttn_lmic_event_t result = {.event = ttn_event};
     waiting_reason = TTN_WAITING_NONE;
-    lora_state_tracker = waiting_reason;
+    // lora_state_tracker = waiting_reason;
     ESP_LOGI(TAG, "714:\n");
     xQueueSend(lmic_event_queue, &result, pdMS_TO_TICKS(100));
 }
@@ -750,7 +756,7 @@ void message_received_callback(void *user_data, uint8_t port, const uint8_t *mes
 void message_transmitted_callback(void *user_data, int success)
 {
     waiting_reason = TTN_WAITING_NONE;
-    lora_state_tracker = waiting_reason;
+    // lora_state_tracker = waiting_reason;
 
     ttn_lmic_event_t result = {.event = success ? TTN_EVENT_TRANSMISSION_COMPLETED : TTN_EVENT_TRANSMISSION_FAILED};
     ESP_LOGI(TAG, "750:\n");
@@ -770,3 +776,5 @@ void clear_rf_settings(ttn_rf_settings_t *rf_settings)
 {
     memset(rf_settings, 0, sizeof(*rf_settings));
 }
+
+

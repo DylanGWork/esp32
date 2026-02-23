@@ -1771,7 +1771,7 @@ static bit_t processJoinAccept_nojoinframe(void) {
         }
         #endif
         #if defined(CFG_eu868)
-        if(comms_counter > 3 && joined == 0)
+        if(comms_counter > 3 && has_joined == 0)
             {
                 ESP_LOGI(TAG, "Re-transmitting for join");
                 LMIC.datarate = 0;
@@ -2649,8 +2649,10 @@ static void engineUpdate_inner (void) {
         }
         // Delayed TX or waiting for duty cycle?
         if( (LMIC.globalDutyRate != 0 || (LMIC.opmode & OP_RNDTX) != 0)  &&  (txbeg - LMIC.globalDutyAvail) < 0 )
-            LMIC_DEBUG_PRINTF("LMIC.globalDutyAvail: %d\n", LMIC.globalDutyAvail);
+        {
+            LMIC_DEBUG_PRINTF("LMIC.globalDutyAvail: %ld\n", LMIC.globalDutyAvail);
             txbeg = LMIC.globalDutyAvail;
+        }
 #if !defined(DISABLE_BEACONS)
         // If we're tracking a beacon...
         // then make sure TX-RX transaction is complete before beacon
@@ -3225,25 +3227,15 @@ u1_t LMIC_getBatteryLevel(void) {
 
 void comms_fail(){
     ESP_LOGI(TAG, "comms_fail");
-    // vTaskDelete(LED_SEQUENCE);
-    rtc_gpio_init(Membrane_LED_Green);
-    rtc_gpio_set_direction(Membrane_LED_Green, RTC_GPIO_MODE_OUTPUT_ONLY);
-    rtc_gpio_set_level(Membrane_LED_Green,0);
-    rtc_gpio_init(Membrane_LED_Yellow);
-    rtc_gpio_set_direction(Membrane_LED_Yellow, RTC_GPIO_MODE_OUTPUT_ONLY);
-    rtc_gpio_set_level(Membrane_LED_Yellow,0);
-    vTaskDelay(10);
-    rtc_gpio_init(Membrane_LED_Red);
-    rtc_gpio_set_direction(Membrane_LED_Red, RTC_GPIO_MODE_OUTPUT_ONLY);
-    rtc_gpio_set_level(Membrane_LED_Red,1);
+    // vTaskDelete(LED_SEQUENCE)
+    ulp_led_set(LED_CMD_STATE_CHECK, LED_STATE_POOR);
     // setup_ulp();
     ttn_prepare_for_deep_sleep();
     init_ulp_program();
     ulp_counter_state_for_ULP = 19998000;
     ulp_state = 10;
-    ulp_LED_state = 10;
     state = 10;
-    joined = 0;
+    // joined = 0;
     vTaskDelay(100);
     interrupts_service_no_impact();
     ESP_LOGI(TAG, "States: %d, %u", state, ulp_LED_state);    

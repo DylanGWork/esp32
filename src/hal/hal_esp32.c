@@ -309,7 +309,7 @@ int64_t os_time_to_esp_time(int64_t esp_now, uint32_t os_time)
 
 int64_t IRAM_ATTR get_current_time()
 {
-    return esp_timer_get_time() + time_offset + 34202616800; //34202616800 this is the number to test 10 hour timeout
+    return esp_timer_get_time() + time_offset;// + 34202616800; //34202616800 this is the number to test 10 hour timeout
 }
 
 void init_timer(void)
