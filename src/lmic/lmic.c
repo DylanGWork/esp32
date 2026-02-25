@@ -3227,18 +3227,17 @@ u1_t LMIC_getBatteryLevel(void) {
 
 void comms_fail(){
     ESP_LOGI(TAG, "comms_fail");
-    // vTaskDelete(LED_SEQUENCE)
-    ulp_led_set(LED_CMD_STATE_CHECK, LED_STATE_POOR);
-    // setup_ulp();
+    // Drive explicit repeating comms-fail UI while the MCU returns to deep sleep.
+    ulp_led_set(LED_CMD_ERROR_COMMS, 0);
     ttn_prepare_for_deep_sleep();
-    init_ulp_program();
     ulp_counter_state_for_ULP = 19998000;
     ulp_state = 10;
     state = 10;
+    ulp_main_mcu = 0;
     // joined = 0;
     vTaskDelay(100);
     interrupts_service_no_impact();
-    ESP_LOGI(TAG, "States: %d, %u", state, ulp_LED_state);    
+    ESP_LOGI(TAG, "States: %d, ulp_led_cmd=%u, led_engine_enabled=%u", state, ulp_led_cmd, ulp_led_engine_enabled);
 
     ESP_ERROR_CHECK( esp_sleep_enable_ulp_wakeup()); 
     esp_deep_sleep_start();
