@@ -774,6 +774,22 @@ extern "C"
     void ttn_set_max_tx_pow(int tx_pow);
 
     /**
+     * @brief Sets runtime override for confirmed uplink retry attempts.
+     *
+     * Set to 0 to use LMIC default behavior. Set to 1 for single-attempt confirmed transactions.
+     *
+     * @param attempts number of confirmed attempts override (0 = default)
+     */
+    void ttn_set_confirm_retry_limit(uint8_t attempts);
+
+    /**
+     * @brief Gets runtime override for confirmed uplink retry attempts.
+     *
+     * @return override value (0 = LMIC default)
+     */
+    uint8_t ttn_get_confirm_retry_limit(void);
+
+    /**
      * @brief Gets current RX/TX window
      * @return window
      */

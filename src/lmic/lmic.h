@@ -713,6 +713,8 @@ lmic_tx_error_t LMIC_setTxData2(u1_t port, xref2u1_t data, u1_t dlen, u1_t confi
 lmic_tx_error_t LMIC_setTxData2_strict(u1_t port, xref2u1_t data, u1_t dlen, u1_t confirmed);
 lmic_tx_error_t LMIC_sendWithCallback(u1_t port, xref2u1_t data, u1_t dlen, u1_t confirmed, lmic_txmessage_cb_t *pCb, void *pUserData);
 lmic_tx_error_t LMIC_sendWithCallback_strict(u1_t port, xref2u1_t data, u1_t dlen, u1_t confirmed, lmic_txmessage_cb_t *pCb, void *pUserData);
+void  LMIC_set_confirm_retry_limit(u1_t attempts);
+u1_t  LMIC_get_confirm_retry_limit(void);
 void  LMIC_sendAlive    (void);
 
 #if !defined(DISABLE_BEACONS)
@@ -776,6 +778,9 @@ DECL_ON_LMIC_EVENT;
 
 extern uint32_t comms_counter;
 void comms_fail();
+void p0_fail_policy_reset(void);
+bool p0_fail_policy_force_turnoff_pending(void);
+void p0_fail_policy_clear_force_turnoff_pending(void);
 // names for backward compatibility
 #include "lmic_compat.h"
 // #include "../../main/main.h"

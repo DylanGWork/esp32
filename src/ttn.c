@@ -84,6 +84,24 @@ static void message_received_callback(void *user_data, uint8_t port, const uint8
 static void message_transmitted_callback(void *user_data, int success);
 static void save_rf_settings(ttn_rf_settings_t *rf_settings);
 static void clear_rf_settings(ttn_rf_settings_t *rf_settings);
+static void force_current_tx_failed_event(void);
+
+static void force_current_tx_failed_event(void)
+{
+    // Force-unblock any thread waiting in ttn_transmit_message() when we abort a TX path.
+    waiting_reason = TTN_WAITING_NONE;
+    LMIC.opmode = OP_NONE;
+
+    if (lmic_event_queue != NULL) {
+        ttn_lmic_event_t result = {
+            .event = TTN_EVENT_TRANSMISSION_FAILED,
+            .port = 0,
+            .message = NULL,
+            .message_size = 0,
+        };
+        (void)xQueueSend(lmic_event_queue, &result, 0);
+    }
+}
 
 void ttn_init(void)
 {
@@ -534,6 +552,18 @@ void ttn_set_max_tx_pow(int tx_pow)
     }
 }
 
+void ttn_set_confirm_retry_limit(uint8_t attempts)
+{
+    hal_esp32_enter_critical_section();
+    LMIC_set_confirm_retry_limit((u1_t)attempts);
+    hal_esp32_leave_critical_section();
+}
+
+uint8_t ttn_get_confirm_retry_limit(void)
+{
+    return (uint8_t)LMIC_get_confirm_retry_limit();
+}
+
 ttn_rf_settings_t ttn_get_rf_settings(ttn_rx_tx_window_t window)
 {
     int index = ((int)window) & 0x03;
@@ -641,22 +671,9 @@ void event_callback(void *user_data, ev_t event)
         if(state == 6 || state == 7 || state == 3 || state == 9 || state == 4)
         {
             ESP_LOGI(TAG, "In field state, do not go into comms fail mode \n");       
-            interrupts_service_no_impact();
-            ESP_LOGI(TAG,"failed state that im checking3\n");
-            setup_ulp();
             state = 3;
             ulp_state = 3;
-            waiting_reason = TTN_WAITING_NONE;
-            LMIC.opmode = OP_NONE;
-            ttn_prepare_for_deep_sleep();
-            ESP_LOGI(TAG,"failed state that im checking1\n");
-            vTaskDelay(50);
-            ULP_Var_reset();
-            // printf("state %d in fail\n", state);
-            ESP_LOGI(TAG,"failed state that im checking2\n");
-            ESP_ERROR_CHECK( esp_sleep_enable_ulp_wakeup());
-            esp_deep_sleep_start();
-            ESP_LOGI(TAG,"failed state that im checking4\n");
+            force_current_tx_failed_event();
 
         } else {
             comms_fail();
@@ -677,6 +694,8 @@ void event_callback(void *user_data, ev_t event)
         {
             ESP_LOGI(TAG, "In field state, do not go into comms fail mode \n");
             state = 3;
+            ulp_state = 3;
+            force_current_tx_failed_event();
         } else{
             comms_fail();
         }
@@ -695,6 +714,8 @@ void event_callback(void *user_data, ev_t event)
         {
             ESP_LOGI(TAG, "In field state, do not go into comms fail mode \n");
             state = 3;
+            ulp_state = 3;
+            force_current_tx_failed_event();
         } else{
             comms_fail();
         }

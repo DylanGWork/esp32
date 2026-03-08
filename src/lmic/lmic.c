@@ -41,6 +41,17 @@
 #endif
 
 DEFINE_LMIC;
+static u1_t s_confirm_retry_limit_override = 0;
+
+void LMIC_set_confirm_retry_limit(u1_t attempts)
+{
+    s_confirm_retry_limit_override = attempts;
+}
+
+u1_t LMIC_get_confirm_retry_limit(void)
+{
+    return s_confirm_retry_limit_override;
+}
 
 // Fwd decls.
 static void reportEventNoUpdate(ev_t);
@@ -2344,7 +2355,8 @@ static bit_t processDnData (void) {
 // nothing was received this window.
 static bit_t processDnData_norx(void) {
     if( LMIC.txCnt != 0 ) {
-        if( LMIC.txCnt < TXCONF_ATTEMPTS ) {
+        const u1_t retry_limit = (s_confirm_retry_limit_override > 0) ? s_confirm_retry_limit_override : TXCONF_ATTEMPTS;
+        if( LMIC.txCnt < retry_limit ) {
             // Per [1.0.3] section 18.4, it is recommended that the device adjust datarate down.
             // The spec is not clear about what should happen in case the data size is too large
             // for the new frame len, but it seems that we should leave theframe len at the new
@@ -3223,23 +3235,79 @@ u1_t LMIC_getBatteryLevel(void) {
     return LMIC.client.devStatusAns_battery;
 }
 
+// P0 comms-fail policy:
+// stage 0 -> first P0 fail: blink red for 5 minutes, then retry one more P0
+// stage 1 -> second P0 fail: schedule final P8 + hard power cut on next boot
+#define P0_FAIL_RETRY_DELAY_TICKS 3000U  // 3000 * 100 ms = 5 minutes
+
+static RTC_DATA_ATTR uint8_t s_p0_fail_stage = 0;
+static RTC_DATA_ATTR uint8_t s_p0_force_turnoff_pending = 0;
+
+static void comms_fail_enter_deep_sleep(void)
+{
+    ulp_main_mcu = 0;
+    vTaskDelay(100);
+    interrupts_service_no_impact();
+    ESP_LOGI(TAG, "States: %d, ulp_led_cmd=%u, led_engine_enabled=%u", state, ulp_led_cmd, ulp_led_engine_enabled);
+
+    ESP_ERROR_CHECK(esp_sleep_enable_ulp_wakeup());
+    esp_deep_sleep_start();
+    ESP_LOGI(TAG, "should not see this");
+}
+
+void p0_fail_policy_reset(void)
+{
+    s_p0_fail_stage = 0;
+    s_p0_force_turnoff_pending = 0;
+}
+
+bool p0_fail_policy_force_turnoff_pending(void)
+{
+    return (s_p0_force_turnoff_pending != 0);
+}
+
+void p0_fail_policy_clear_force_turnoff_pending(void)
+{
+    s_p0_force_turnoff_pending = 0;
+}
 
 
 void comms_fail(){
     ESP_LOGI(TAG, "comms_fail");
-    // Drive explicit repeating comms-fail UI while the MCU returns to deep sleep.
+
+    // Special handling for init P0 comms failure:
+    // first fail waits 5 minutes and retries once; second fail triggers final-off flow.
+    if (state == 0) {
+        ulp_led_set(LED_CMD_ERROR_COMMS, 0);
+        ttn_prepare_for_deep_sleep();
+
+        if (s_p0_fail_stage == 0) {
+            s_p0_fail_stage = 1;
+            // Retry one more P0 after 5 minutes.
+            ulp_counter_state_for_ULP = 10000000 + P0_FAIL_RETRY_DELAY_TICKS;
+            ulp_state = 0;
+            state = 0;
+            ESP_LOGW(TAG, "P0 comms fail: scheduling one retry in 5 minutes");
+            comms_fail_enter_deep_sleep();
+            return;
+        }
+
+        // Second failure: request final P8 + hard power cut on next boot.
+        s_p0_fail_stage = 0;
+        s_p0_force_turnoff_pending = 1;
+        ulp_counter_state_for_ULP = 10000001;
+        ulp_state = 0;
+        state = 0;
+        ESP_LOGW(TAG, "P0 retry failed: scheduling final power-off flow");
+        comms_fail_enter_deep_sleep();
+        return;
+    }
+
+    // Default path for non-P0 comms failures.
     ulp_led_set(LED_CMD_ERROR_COMMS, 0);
     ttn_prepare_for_deep_sleep();
     ulp_counter_state_for_ULP = 19998000;
     ulp_state = 10;
     state = 10;
-    ulp_main_mcu = 0;
-    // joined = 0;
-    vTaskDelay(100);
-    interrupts_service_no_impact();
-    ESP_LOGI(TAG, "States: %d, ulp_led_cmd=%u, led_engine_enabled=%u", state, ulp_led_cmd, ulp_led_engine_enabled);
-
-    ESP_ERROR_CHECK( esp_sleep_enable_ulp_wakeup()); 
-    esp_deep_sleep_start();
-    ESP_LOGI(TAG, "should not see this");
+    comms_fail_enter_deep_sleep();
 }
