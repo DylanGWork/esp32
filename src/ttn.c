@@ -24,6 +24,7 @@
 #define TAG "ttn"
 
 #define DEFAULT_MAX_TX_POWER -1000
+#define TTN_TX_WAIT_TIMEOUT_MS 20000
 extern TaskHandle_t LED_SEQUENCE;
 
 /**
@@ -123,7 +124,7 @@ void start(void)
     hal_esp32_enter_critical_section();
     LMIC_reset();
 
-    LMIC_setClockError(MAX_CLOCK_ERROR * 4 / 100);
+    LMIC_setClockError(MAX_CLOCK_ERROR * 1 / 100);
     waiting_reason = TTN_WAITING_NONE;
     lora_state_tracker = waiting_reason;
 
@@ -361,6 +362,7 @@ static const char *lmic_ev_name(uint8_t e)
 }
 /* ------------------------------------------------------------------ */
 
+// AI Updated: Route TX timeout in service states (0/1) through comms_fail() so state-10 comms-error context is consistently applied. // AI added HERE
 ttn_response_code_t ttn_transmit_message(const uint8_t *payload, size_t length, ttn_port_t port, bool confirm)
 {
     // gpio_config_t io_conf;
@@ -414,7 +416,21 @@ ttn_response_code_t ttn_transmit_message(const uint8_t *payload, size_t length, 
         ttn_lmic_event_t result;
         ESP_LOGI(TAG, "397:\n");
 
-        xQueueReceive(lmic_event_queue, &result, portMAX_DELAY);
+        if (!xQueueReceive(lmic_event_queue, &result, pdMS_TO_TICKS(TTN_TX_WAIT_TIMEOUT_MS)))
+        {
+            ESP_LOGE(TAG, "TX wait timed out after %d ms", TTN_TX_WAIT_TIMEOUT_MS);
+            hal_esp32_enter_critical_section();
+            waiting_reason = TTN_WAITING_NONE;
+            lora_state_tracker = waiting_reason;
+            LMIC.client.txMessageCb = NULL;
+            LMIC.client.txMessageUserData = NULL;
+            hal_esp32_leave_critical_section();
+            if (state == 0 || state == 1) { // AI added HERE
+                ESP_LOGW(TAG, "Service-state TX timeout routed to comms_fail()"); // AI added HERE
+                comms_fail(); // AI added HERE
+            } // AI added HERE
+            return TTN_ERROR_TRANSMISSION_FAILED;
+        }
     /* now ‘result’ is valid – print it in a human-readable form       */
         ESP_LOGI(TAG, "399:\n");
         switch (result.event)
@@ -587,9 +603,9 @@ void event_callback(void *user_data, ev_t event)
             if(retransmit_counter > 4 && joined == 1)
             {
                 ESP_LOGI(TAG, "Re-transmitting for confirmed");
-                // LMIC.datarate = 0;
+                LMIC.datarate = 0;
                 #if defined(CFG_eu868)
-                // LMIC.txpow = 16;
+                LMIC.txpow = 16;
                 #endif
                 #if defined(CFG_au915)
                 LMIC.txpow = 20;
@@ -635,7 +651,7 @@ void event_callback(void *user_data, ev_t event)
         if(state == 6 || state == 7 || state == 3 || state == 9 || state == 4)
         {
             ESP_LOGI(TAG, "In field state, do not go into comms fail mode \n");       
-            interrupts_service_no_impact();
+            interrupts_service_OFF();
             ESP_LOGI(TAG,"failed state that im checking3\n");
             setup_ulp();
             state = 3;
