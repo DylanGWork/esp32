@@ -35,6 +35,11 @@
 
 #define TAG "lmic"
 
+extern bool ui_button_interaction_active(void);
+extern void ui_comms_error_show(void);
+extern void ui_p0_comms_error_show(void);
+extern void ulp_sleep_plan_apply_wake_mask(const char *reason);
+
 
 #if defined(DISABLE_BEACONS) && !defined(DISABLE_PING)
 #error Ping needs beacon tracking
@@ -42,6 +47,23 @@
 
 DEFINE_LMIC;
 static u1_t s_confirm_retry_limit_override = 0;
+static u1_t s_confirm_retry_auto_limit = 0;
+static dr_t s_confirm_retry_min_dr = (dr_t)LORAWAN_DR0;
+static s1_t s_confirm_retry_escalation_txpow = 0;
+static u1_t s_confirm_retry_escalate_from = 0;
+
+enum {
+#if BROWNOUT_STRESS_BUILD
+    FIELD_CONFIRM_TOTAL_ATTEMPTS_DEFAULT = 7,  // 1 initial + 6 retries for stress testing
+    FIELD_CONFIRM_TOTAL_ATTEMPTS_MIN_DR  = 7,  // if already at min DR, keep hammering at max airtime
+    FIELD_CONFIRM_ESCALATE_FROM_TXCNT    = 6,  // attempts 6 and 7 are the "max" phase
+#else
+    FIELD_CONFIRM_TOTAL_ATTEMPTS_DEFAULT = 6,  // 1 initial + 3 normal + 2 max
+    FIELD_CONFIRM_TOTAL_ATTEMPTS_MIN_DR  = 4,  // 1 initial + 3 retries when already at min DR
+    FIELD_CONFIRM_ESCALATE_FROM_TXCNT    = 5,  // attempts 5 and 6 are the "max" phase
+#endif
+    LMIC_JOIN_REQUEST_CAP               = 5,  // one LMIC join session may send at most 5 join requests
+};
 
 void LMIC_set_confirm_retry_limit(u1_t attempts)
 {
@@ -51,6 +73,68 @@ void LMIC_set_confirm_retry_limit(u1_t attempts)
 u1_t LMIC_get_confirm_retry_limit(void)
 {
     return s_confirm_retry_limit_override;
+}
+
+static void confirm_retry_policy_reset(void)
+{
+    s_confirm_retry_auto_limit = 0;
+    s_confirm_retry_min_dr = (dr_t)LORAWAN_DR0;
+    s_confirm_retry_escalation_txpow = 0;
+    s_confirm_retry_escalate_from = 0;
+}
+
+static dr_t confirm_retry_policy_min_dr(dr_t dr)
+{
+    dr_t current = dr;
+    while (1) {
+        dr_t next = decDR(current);
+        if (next == current) {
+            return current;
+        }
+        current = next;
+    }
+}
+
+static s1_t confirm_retry_policy_region_max_txpow(void)
+{
+#if defined(CFG_au915) || defined(CFG_us915)
+    return 20;
+#elif defined(CFG_eu868) || defined(CFG_as923) || defined(CFG_in866) || defined(CFG_kr920)
+    return 16;
+#else
+    return LMIC.txpow;
+#endif
+}
+
+static void confirm_retry_policy_init_for_packet(void)
+{
+    confirm_retry_policy_reset();
+
+    if (!LMIC.pendTxConf || s_confirm_retry_limit_override != 0) {
+        return;
+    }
+
+    s_confirm_retry_min_dr = confirm_retry_policy_min_dr((dr_t)LMIC.datarate);
+    s_confirm_retry_escalation_txpow = confirm_retry_policy_region_max_txpow();
+
+    if ((dr_t)LMIC.datarate == s_confirm_retry_min_dr) {
+        s_confirm_retry_auto_limit = FIELD_CONFIRM_TOTAL_ATTEMPTS_MIN_DR;
+        return;
+    }
+
+    s_confirm_retry_auto_limit = FIELD_CONFIRM_TOTAL_ATTEMPTS_DEFAULT;
+    s_confirm_retry_escalate_from = FIELD_CONFIRM_ESCALATE_FROM_TXCNT;
+}
+
+static u1_t confirm_retry_policy_limit(void)
+{
+    if (s_confirm_retry_limit_override > 0) {
+        return s_confirm_retry_limit_override;
+    }
+    if (s_confirm_retry_auto_limit > 0) {
+        return s_confirm_retry_auto_limit;
+    }
+    return TXCONF_ATTEMPTS;
 }
 
 // Fwd decls.
@@ -1593,8 +1677,11 @@ static void onJoinFailed (xref2osjob_t osjob) {
     LMIC_API_PARAMETER(osjob);
 
     // Notify app - must call LMIC_reset() to stop joining
-    // otherwise join procedure continues.
-    reportEventAndUpdate(EV_JOIN_FAILED);
+    // otherwise join procedure continues. Do not run engineUpdate() here:
+    // the app-side join wrapper resets LMIC immediately after receiving the
+    // join-failed event, and continuing the engine here can race into a new
+    // radio transaction while the reset is happening.
+    reportEventNoUpdate(EV_JOIN_FAILED);
 }
 
 // process join-accept message or deal with no join-accept in slot 2.
@@ -1728,7 +1815,7 @@ static bit_t processJoinAccept_nojoinframe(void) {
             if( LMIC.rejoinCnt < 10 )
                 LMIC.rejoinCnt++;
             
-            reportEventAndUpdate(EV_REJOIN_FAILED);
+            reportEventNoUpdate(EV_REJOIN_FAILED);
             // stop the join process.
             return 1;
         }
@@ -1741,16 +1828,13 @@ static bit_t processJoinAccept_nojoinframe(void) {
         reportEventNoUpdate(EV_JOIN_TXCOMPLETE);
         LMIC.joinCnt++;
         ESP_LOGI(TAG, "Join attempt %d \n", LMIC.joinCnt);
-        // ESP_LOGI(TAG, "Join attempt %d \n", LMIC.joinCnt);
-        if(LMIC.joinCnt > 2)
-        {
-            // LMIC.opmode = EV_JOIN_FAILED;
+        int failed;
+        if (LMIC.joinCnt >= LMIC_JOIN_REQUEST_CAP) {
+            ESP_LOGW(TAG, "Join request cap reached (%u); ending join session", (unsigned)LMIC_JOIN_REQUEST_CAP);
+            failed = 1;
+        } else {
+            failed = LMICbandplan_nextJoinState();
         }
-        //Stop the join process looping forever to help conserve battery life
-        // join_attempts++;
-        // ESP_LOGI(TAG, "Join attempt %d \n", join_attempts);
-
-        int failed = LMICbandplan_nextJoinState();
 
         EV(devCond, DEBUG, (e_.reason = EV::devCond_t::NO_JACC,
                             e_.eui    = MAIN::CDEV->getEui(),
@@ -1771,44 +1855,8 @@ static bit_t processJoinAccept_nojoinframe(void) {
                             ? FUNC_ADDR(onJoinFailed)      // one JOIN iteration done and failed
                             : FUNC_ADDR(runEngineUpdate)); // next step to be delayed
         // stop this join process.
-/*Custom code by Dylan to add Communication failure in the Join Process */
         comms_counter++;
         ESP_LOGI(TAG, "comms_counter %d, LMIC.datarate %d \n", comms_counter, LMIC.datarate);
-        #if defined(CFG_au915)
-        // LMIC.datarate = 0;
-        if(comms_counter > 5){
-            
-            comms_fail();
-        }
-        #endif
-        #if defined(CFG_eu868)
-        if(comms_counter > 3 && has_joined == 0)
-            {
-                ESP_LOGI(TAG, "Re-transmitting for join");
-                LMIC.datarate = 0;
-                #if defined(CFG_eu868)
-                LMIC.txpow = 16;
-                #endif
-            } 
-        if(comms_counter > 4)
-        {
-            ESP_LOGI(TAG, "comms failing %d \n", comms_counter);
-            comms_fail();
-        }
-        #endif
-       #if defined(CFG_us915)
-        if(comms_counter > 5)
-        {
-            comms_fail();
-        }
-        #endif
-        #if defined(CFG_as923)
-        if(comms_counter > 5){
-            comms_fail();
-        }
-        #endif
-
-/* End Custome code*/
         return 1;
 }
 
@@ -2355,7 +2403,7 @@ static bit_t processDnData (void) {
 // nothing was received this window.
 static bit_t processDnData_norx(void) {
     if( LMIC.txCnt != 0 ) {
-        const u1_t retry_limit = (s_confirm_retry_limit_override > 0) ? s_confirm_retry_limit_override : TXCONF_ATTEMPTS;
+        const u1_t retry_limit = confirm_retry_policy_limit();
         if( LMIC.txCnt < retry_limit ) {
             // Per [1.0.3] section 18.4, it is recommended that the device adjust datarate down.
             // The spec is not clear about what should happen in case the data size is too large
@@ -2363,9 +2411,13 @@ static bit_t processDnData_norx(void) {
             // data size. Therefore, we set the new data rate here, and then check at transmit time
             // whether the packet is now too large; if so, we abandon the transmission.
             LMIC.txCnt += 1;
-            // becase txCnt was at least 1 when we entered this branch, this if() will be taken
-            // for txCnt == 3, 5, 7.
-            if (LMIC.txCnt & 1) {
+            if (s_confirm_retry_escalate_from != 0 && LMIC.txCnt >= s_confirm_retry_escalate_from) {
+                // Last two retries use the most conservative link settings.
+                setDrTxpow(DRCHG_NOACK, s_confirm_retry_min_dr, s_confirm_retry_escalation_txpow);
+            }
+            // because txCnt was at least 1 when we entered this branch, this if() will be taken
+            // for txCnt == 3 in our "normal" phase.
+            else if (LMIC.txCnt & 1) {
                 dr_t adjustedDR;
                 // lower DR
                 adjustedDR = decDR(LMIC.datarate);
@@ -2374,9 +2426,27 @@ static bit_t processDnData_norx(void) {
 
             // TODO(tmm@mcci.com): check feasibility of lower datarate
             // Schedule another retransmission
+#if BROWNOUT_STRESS_BUILD
+            ESP_LOGW(TAG,
+                     "Brownout stress retry: seq=%lu attempt=%u/%u dr=%u min_dr=%u txpow=%d adrTxPow=%d stage=%s",
+                     (unsigned long)LMIC.seqnoUp,
+                     (unsigned)LMIC.txCnt,
+                     (unsigned)retry_limit,
+                     (unsigned)LMIC.datarate,
+                     (unsigned)s_confirm_retry_min_dr,
+                     (int)LMIC.txpow,
+                     (int)LMIC.adrTxPow,
+                     (s_confirm_retry_escalate_from != 0 && LMIC.txCnt >= s_confirm_retry_escalate_from) ? "max" : "normal");
+#endif
             txDelay(LMIC.rxtime, RETRY_PERIOD_secs);
             LMIC.opmode &= ~OP_TXRXPEND;
             engineUpdate();
+            return 1;
+        }
+        const bool field_operation_failure = !ui_button_interaction_active() &&
+            (state == 3 || state == 4 || state == 6 || state == 7 || state == 9);
+        if (!field_operation_failure) {
+            comms_fail();
             return 1;
         }
         // confirmed uplink is complete without an ack: no port and no flag
@@ -2408,6 +2478,7 @@ static bit_t processDnData_txcomplete(void) {
     LMIC.opmode &= ~(OP_TXDATA|OP_TXRXPEND);
     // turn off all the repeat stuff.
     LMIC.txCnt = LMIC.upRepeatCount = 0;
+    confirm_retry_policy_reset();
 
     // if there's pending mac data that's not piggyback, launch it now.
     if (LMIC.pendMacLen != 0) {
@@ -2995,6 +3066,9 @@ void LMIC_setTxData_strict (void) {
     if( (LMIC.opmode & OP_JOINING) == 0 ) {
         LMIC.txCnt = 0;             // reset the confirmed uplink FSM
         LMIC.upRepeatCount = 0;     // reset the unconfirmed repeat FSM
+        confirm_retry_policy_init_for_packet();
+    } else {
+        confirm_retry_policy_reset();
     }
     engineUpdate();
 }
@@ -3247,7 +3321,7 @@ static void comms_fail_enter_deep_sleep(void)
 {
     ulp_main_mcu = 0;
     vTaskDelay(100);
-    interrupts_service_no_impact();
+    ulp_sleep_plan_apply_wake_mask("lmic:comms_fail_enter_deep_sleep");
     ESP_LOGI(TAG, "States: %d, ulp_led_cmd=%u, led_engine_enabled=%u", state, ulp_led_cmd, ulp_led_engine_enabled);
 
     ESP_ERROR_CHECK(esp_sleep_enable_ulp_wakeup());
@@ -3266,6 +3340,11 @@ bool p0_fail_policy_force_turnoff_pending(void)
     return (s_p0_force_turnoff_pending != 0);
 }
 
+bool p0_fail_policy_retry_pending(void)
+{
+    return (s_p0_fail_stage != 0);
+}
+
 void p0_fail_policy_clear_force_turnoff_pending(void)
 {
     s_p0_force_turnoff_pending = 0;
@@ -3278,13 +3357,13 @@ void comms_fail(){
     // Special handling for init P0 comms failure:
     // first fail waits 5 minutes and retries once; second fail triggers final-off flow.
     if (state == 0) {
-        ulp_led_set(LED_CMD_ERROR_COMMS, 0);
+        ui_p0_comms_error_show();
         ttn_prepare_for_deep_sleep();
 
         if (s_p0_fail_stage == 0) {
             s_p0_fail_stage = 1;
             // Retry one more P0 after 5 minutes.
-            ulp_counter_state_for_ULP = 10000000 + P0_FAIL_RETRY_DELAY_TICKS;
+            ulp_schedule_p0_retry("lmic:comms_fail:first_p0_fail");
             ulp_state = 0;
             state = 0;
             ESP_LOGW(TAG, "P0 comms fail: scheduling one retry in 5 minutes");
@@ -3295,7 +3374,7 @@ void comms_fail(){
         // Second failure: request final P8 + hard power cut on next boot.
         s_p0_fail_stage = 0;
         s_p0_force_turnoff_pending = 1;
-        ulp_counter_state_for_ULP = 10000001;
+        ulp_schedule_immediate(0U, "lmic:comms_fail:final_power_off");
         ulp_state = 0;
         state = 0;
         ESP_LOGW(TAG, "P0 retry failed: scheduling final power-off flow");
@@ -3304,10 +3383,14 @@ void comms_fail(){
     }
 
     // Default path for non-P0 comms failures.
-    ulp_led_set(LED_CMD_ERROR_COMMS, 0);
+    // Never strand a deployed unit in COMMS_ERROR_STATE: after a transport
+    // failure, return to the normal heartbeat field state and try again later.
+    if (ui_button_interaction_active() || state == 8) {
+        ui_comms_error_show();
+    }
     ttn_prepare_for_deep_sleep();
-    ulp_counter_state_for_ULP = 19998000;
-    ulp_state = 10;
-    state = 10;
+    ulp_schedule_heartbeat_units((uint32_t)PS_Settings.heartbeat, 3U, "lmic:comms_fail:default");
+    ulp_state = 3;
+    state = 3;
     comms_fail_enter_deep_sleep();
 }

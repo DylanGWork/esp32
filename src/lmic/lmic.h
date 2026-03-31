@@ -781,6 +781,7 @@ void comms_fail();
 void p0_fail_policy_reset(void);
 bool p0_fail_policy_force_turnoff_pending(void);
 void p0_fail_policy_clear_force_turnoff_pending(void);
+bool p0_fail_policy_retry_pending(void);
 // names for backward compatibility
 #include "lmic_compat.h"
 // #include "../../main/main.h"

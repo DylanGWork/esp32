@@ -84,23 +84,13 @@ static void message_received_callback(void *user_data, uint8_t port, const uint8
 static void message_transmitted_callback(void *user_data, int success);
 static void save_rf_settings(ttn_rf_settings_t *rf_settings);
 static void clear_rf_settings(ttn_rf_settings_t *rf_settings);
-static void force_current_tx_failed_event(void);
+static bool restored_session_is_valid(void);
 
-static void force_current_tx_failed_event(void)
+static bool restored_session_is_valid(void)
 {
-    // Force-unblock any thread waiting in ttn_transmit_message() when we abort a TX path.
-    waiting_reason = TTN_WAITING_NONE;
-    LMIC.opmode = OP_NONE;
-
-    if (lmic_event_queue != NULL) {
-        ttn_lmic_event_t result = {
-            .event = TTN_EVENT_TRANSMISSION_FAILED,
-            .port = 0,
-            .message = NULL,
-            .message_size = 0,
-        };
-        (void)xQueueSend(lmic_event_queue, &result, 0);
-    }
+    // A restored LMIC image is only usable as a resumed joined session if it
+    // actually carries a session DevAddr and is not still mid-join.
+    return (LMIC.devaddr != 0) && ((LMIC.opmode & OP_JOINING) == 0);
 }
 
 void ttn_init(void)
@@ -271,6 +261,17 @@ bool ttn_resume_after_deep_sleep(void)
     if (!ttn_rtc_restore())
         return false;
 
+    if (!restored_session_is_valid())
+    {
+        ESP_LOGW(TAG, "RTC LMIC restore had no valid joined session; forcing fresh join");
+        hal_esp32_enter_critical_section();
+        LMIC_reset();
+        waiting_reason = TTN_WAITING_NONE;
+        hal_esp32_leave_critical_section();
+        has_joined = false;
+        return false;
+    }
+
     has_joined = true;
     return true;
 }
@@ -293,6 +294,17 @@ bool ttn_resume_after_power_off(int off_duration)
 
     if (!ttn_nvs_restore(off_duration))
         return false;
+
+    if (!restored_session_is_valid())
+    {
+        ESP_LOGW(TAG, "NVS LMIC restore had no valid joined session; forcing fresh join");
+        hal_esp32_enter_critical_section();
+        LMIC_reset();
+        waiting_reason = TTN_WAITING_NONE;
+        hal_esp32_leave_critical_section();
+        has_joined = false;
+        return false;
+    }
 
     has_joined = true;
     return true;
@@ -324,7 +336,9 @@ bool join_core(void)
 
     start();
 
-    has_joined = true;
+    has_joined = false;
+    comms_counter = 0;
+    retransmit_counter = 0;
     hal_esp32_enter_critical_section();
 
     xQueueReset(lmic_event_queue);
@@ -346,6 +360,12 @@ bool join_core(void)
     xQueueReceive(lmic_event_queue, &event, portMAX_DELAY);
 
     has_joined = event.event == TTN_EVNT_JOIN_COMPLETED;
+    if (!has_joined) {
+        hal_esp32_enter_critical_section();
+        LMIC_reset();
+        waiting_reason = TTN_WAITING_NONE;
+        hal_esp32_leave_critical_section();
+    }
 
     return has_joined;
 }
@@ -608,7 +628,7 @@ void event_callback(void *user_data, ev_t event)
     switch (event)
     {
     case EV_TXSTART:
-        
+        retransmit_counter = (LMIC.pendTxConf && LMIC.txCnt > 0) ? (LMIC.txCnt - 1) : 0;
         current_rx_tx_window = TTN_WINDOW_TX;
         save_rf_settings(&last_rf_settings[TTN_WINDOW_TX]);
         clear_rf_settings(&last_rf_settings[TTN_WINDOW_RX1]);
@@ -619,19 +639,6 @@ void event_callback(void *user_data, ev_t event)
     case EV_RXSTART:
         if (current_rx_tx_window != TTN_WINDOW_RX1)
         {
-
-            if(retransmit_counter > 1 && has_joined == 1)
-            {
-                ESP_LOGI(TAG, "Re-transmitting for confirmed");
-                LMIC.datarate = 0;
-                #if defined(CFG_eu868)
-                LMIC.txpow = 16;
-                #endif
-                #if defined(CFG_au915)
-                LMIC.txpow = 20;
-                #endif
-
-            } 
             current_rx_tx_window = TTN_WINDOW_RX1;
             save_rf_settings(&last_rf_settings[TTN_WINDOW_RX1]);
         }
@@ -639,8 +646,6 @@ void event_callback(void *user_data, ev_t event)
         {
             current_rx_tx_window = TTN_WINDOW_RX2;
             save_rf_settings(&last_rf_settings[TTN_WINDOW_RX2]);
-            ESP_LOGI(TAG, "What happens here line 514 SF: %d LMIC.txpow: %d, lbt_dbmax: %d, LMIC.adrTxPow: %d , retransmit_counter: %d\n", LMIC.datarate, LMIC.txpow, LMIC.lbt_dbmax, LMIC.adrTxPow, retransmit_counter);
-            retransmit_counter++;
         }
         break;
 
@@ -656,83 +661,16 @@ void event_callback(void *user_data, ev_t event)
      
 #endif
         ttn_event_t ttn_event = TTN_EVENT_NONE;
-
-//    ESP_LOGI(TAG, "events test %s, %d", event_names[event], retransmit_counter);
-    if(retransmit_counter > 2)
-    {
-        #if defined(CFG_eu868)
-        ESP_LOGI(TAG, "Re-transmitting for downlink at MAX EU settings");
-        LMIC.datarate = 0;
-        LMIC.txpow = 16;
-        if(retransmit_counter > 4)
-        {
-        ESP_LOGI(TAG, "comms failing %d \n", retransmit_counter);
-        ESP_LOGI(TAG, "Too many, try again later \n");
-        if(state == 6 || state == 7 || state == 3 || state == 9 || state == 4)
-        {
-            ESP_LOGI(TAG, "In field state, do not go into comms fail mode \n");       
-            state = 3;
-            ulp_state = 3;
-            force_current_tx_failed_event();
-
-        } else {
-            comms_fail();
-        }
-        ESP_LOGI(TAG, "ttn_event %d, waiting_reason %d \n", ttn_event, waiting_reason);
-        }
-        
-        #endif
-        #if defined(CFG_au915)
-        ESP_LOGI(TAG, "Re-transmitting for downlink at MAX AU settings");
-        LMIC.datarate = 0;
-        LMIC.txpow = 20;
-        if(retransmit_counter > 4)
-        {
-        ESP_LOGI(TAG, "comms failing %d \n", retransmit_counter);
-        ESP_LOGI(TAG, "Too many, try again later \n");
-        if(state == 6 || state == 7 || state == 3 || state == 9 || state == 4)
-        {
-            ESP_LOGI(TAG, "In field state, do not go into comms fail mode \n");
-            state = 3;
-            ulp_state = 3;
-            force_current_tx_failed_event();
-        } else{
-            comms_fail();
-        }
-        ESP_LOGI(TAG, "ttn_event %d, waiting_reason %d \n", ttn_event, waiting_reason);
-        }
-        #endif
-        #if defined(CFG_us915)
-        ESP_LOGI(TAG, "Re-transmitting for downlink at MAX US settings");
-        LMIC.datarate = 0;
-        LMIC.txpow = 20;
-        if(retransmit_counter > 4)
-        {
-            ESP_LOGI(TAG, "comms failing %d \n", retransmit_counter);
-            ESP_LOGI(TAG, "Too many, try again later \n");
-        if(state == 6 || state == 7 || state == 3 || state == 9 || state == 4)
-        {
-            ESP_LOGI(TAG, "In field state, do not go into comms fail mode \n");
-            state = 3;
-            ulp_state = 3;
-            force_current_tx_failed_event();
-        } else{
-            comms_fail();
-        }
-            ESP_LOGI(TAG, "ttn_event %d, waiting_reason %d \n", ttn_event, waiting_reason);
-        }
-        #endif
-
-    }
     ESP_LOGI(TAG, "ttn_event %d, waiting_reason %d, LMIC.opmode %u \n", ttn_event, waiting_reason, LMIC.opmode);
     if (waiting_reason == TTN_WAITING_FOR_JOIN)
     {
         if (event == EV_JOINED)
         {
             ttn_event = TTN_EVNT_JOIN_COMPLETED;
+            comms_counter = 0;
             retransmit_counter = 0;
         }
-        else if (event == EV_REJOIN_FAILED || event == EV_RESET)
+        else if (event == EV_JOIN_FAILED || event == EV_REJOIN_FAILED || event == EV_RESET)
         {
             ttn_event = TTN_EVENT_JOIN_FAILED;
         }
@@ -778,6 +716,9 @@ void message_transmitted_callback(void *user_data, int success)
 {
     waiting_reason = TTN_WAITING_NONE;
     // lora_state_tracker = waiting_reason;
+    if (success) {
+        retransmit_counter = 0;
+    }
 
     ttn_lmic_event_t result = {.event = success ? TTN_EVENT_TRANSMISSION_COMPLETED : TTN_EVENT_TRANSMISSION_FAILED};
     ESP_LOGI(TAG, "750:\n");
