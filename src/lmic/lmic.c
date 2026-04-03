@@ -3355,18 +3355,18 @@ void comms_fail(){
     ESP_LOGI(TAG, "comms_fail");
 
     // Special handling for init P0 comms failure:
-    // first fail waits 5 minutes and retries once; second fail triggers final-off flow.
+    // first fail waits 12 hours and retries once; second fail triggers final-off flow.
     if (state == 0) {
         ui_p0_comms_error_show();
         ttn_prepare_for_deep_sleep();
 
         if (s_p0_fail_stage == 0) {
             s_p0_fail_stage = 1;
-            // Retry one more P0 after 5 minutes.
+            // Retry one more P0 after 12 hours.
             ulp_schedule_p0_retry("lmic:comms_fail:first_p0_fail");
             ulp_state = 0;
             state = 0;
-            ESP_LOGW(TAG, "P0 comms fail: scheduling one retry in 5 minutes");
+            ESP_LOGW(TAG, "P0 comms fail: scheduling one retry in 12 hours");
             comms_fail_enter_deep_sleep();
             return;
         }
