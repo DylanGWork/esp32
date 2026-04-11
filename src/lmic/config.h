@@ -217,7 +217,7 @@
 // we assume reasonably-disciplined os_getTime() values. But... there might
 // be platforms that require wider errors.
 #if !defined(LMIC_ENABLE_arbitrary_clock_error)
-# define LMIC_ENABLE_arbitrary_clock_error 0	/* PARAM */
+# define LMIC_ENABLE_arbitrary_clock_error 1	/* PARAM */
 #endif
 
 #endif // _lmic_config_h_

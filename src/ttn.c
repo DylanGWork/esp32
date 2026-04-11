@@ -22,6 +22,7 @@
 #include "ttn_rtc.h"
 
 #define TAG "ttn"
+#define TTN_CLOCK_ERROR_PERCENT 10
 
 int retransmit_counter = 0;
 
@@ -85,12 +86,48 @@ static void message_transmitted_callback(void *user_data, int success);
 static void save_rf_settings(ttn_rf_settings_t *rf_settings);
 static void clear_rf_settings(ttn_rf_settings_t *rf_settings);
 static bool restored_session_is_valid(void);
+static void clear_transient_tx_state_for_sleep_resume(const char *reason);
 
 static bool restored_session_is_valid(void)
 {
     // A restored LMIC image is only usable as a resumed joined session if it
     // actually carries a session DevAddr and is not still mid-join.
     return (LMIC.devaddr != 0) && ((LMIC.opmode & OP_JOINING) == 0);
+}
+
+static void clear_transient_tx_state_for_sleep_resume(const char *reason)
+{
+    const u2_t transient_mask = OP_TXDATA | OP_POLL | OP_TXRXPEND | OP_RNDTX | OP_NEXTCHNL;
+    const u2_t old_opmode = LMIC.opmode;
+    const u1_t old_tx_cnt = LMIC.txCnt;
+    const u1_t old_up_repeat_count = LMIC.upRepeatCount;
+    const u1_t old_pend_tx_len = LMIC.pendTxLen;
+
+    if ((old_opmode & transient_mask) == 0 &&
+        old_tx_cnt == 0 &&
+        old_up_repeat_count == 0 &&
+        old_pend_tx_len == 0)
+    {
+        return;
+    }
+
+    LMIC.opmode &= ~transient_mask;
+    LMIC.txCnt = 0;
+    LMIC.upRepeatCount = 0;
+    LMIC.pendTxConf = 0;
+    LMIC.pendTxPort = 0;
+    LMIC.pendTxLen = 0;
+    LMIC.dataBeg = 0;
+    LMIC.dataLen = 0;
+
+    ESP_LOGW(TAG,
+             "%s: cleared transient LMIC TX state (opmode 0x%x -> 0x%x, txCnt=%u, upRepeat=%u, pendTxLen=%u)",
+             reason,
+             (unsigned)old_opmode,
+             (unsigned)LMIC.opmode,
+             (unsigned)old_tx_cnt,
+             (unsigned)old_up_repeat_count,
+             (unsigned)old_pend_tx_len);
 }
 
 void ttn_init(void)
@@ -133,7 +170,11 @@ void start(void)
     hal_esp32_enter_critical_section();
     LMIC_reset();
 
-    LMIC_setClockError(MAX_CLOCK_ERROR * 4 / 100);
+    LMIC_setClockError(MAX_CLOCK_ERROR * TTN_CLOCK_ERROR_PERCENT / 100);
+    ESP_LOGI(TAG,
+             "LoRa RX clock error allowance requested: %u%% (LMIC_ENABLE_arbitrary_clock_error=%d)",
+             (unsigned)TTN_CLOCK_ERROR_PERCENT,
+             (int)LMIC_ENABLE_arbitrary_clock_error);
     waiting_reason = TTN_WAITING_NONE;
     // lora_state_tracker = waiting_reason;
 
@@ -261,6 +302,8 @@ bool ttn_resume_after_deep_sleep(void)
     if (!ttn_rtc_restore())
         return false;
 
+    clear_transient_tx_state_for_sleep_resume("ttn_resume_after_deep_sleep");
+
     if (!restored_session_is_valid())
     {
         ESP_LOGW(TAG, "RTC LMIC restore had no valid joined session; forcing fresh join");
@@ -294,6 +337,8 @@ bool ttn_resume_after_power_off(int off_duration)
 
     if (!ttn_nvs_restore(off_duration))
         return false;
+
+    clear_transient_tx_state_for_sleep_resume("ttn_resume_after_power_off");
 
     if (!restored_session_is_valid())
     {
@@ -497,12 +542,14 @@ bool ttn_is_provisioned(void)
 
 void ttn_prepare_for_deep_sleep(void)
 {
+    clear_transient_tx_state_for_sleep_resume("ttn_prepare_for_deep_sleep");
     ttn_rtc_save();
     stop();
 }
 
 void ttn_prepare_for_power_off(void)
 {
+    clear_transient_tx_state_for_sleep_resume("ttn_prepare_for_power_off");
     ttn_nvs_save();
     stop();
 }

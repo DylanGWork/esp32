@@ -3309,11 +3309,6 @@ u1_t LMIC_getBatteryLevel(void) {
     return LMIC.client.devStatusAns_battery;
 }
 
-// P0 comms-fail policy:
-// stage 0 -> first P0 fail: blink red for 5 minutes, then retry one more P0
-// stage 1 -> second P0 fail: schedule final P8 + hard power cut on next boot
-#define P0_FAIL_RETRY_DELAY_TICKS 3000U  // 3000 * 100 ms = 5 minutes
-
 static RTC_DATA_ATTR uint8_t s_p0_fail_stage = 0;
 static RTC_DATA_ATTR uint8_t s_p0_force_turnoff_pending = 0;
 
@@ -3323,6 +3318,8 @@ static void comms_fail_enter_deep_sleep(void)
     vTaskDelay(100);
     ulp_sleep_plan_apply_wake_mask("lmic:comms_fail_enter_deep_sleep");
     ESP_LOGI(TAG, "States: %d, ulp_led_cmd=%u, led_engine_enabled=%u", state, ulp_led_cmd, ulp_led_engine_enabled);
+    ESP_LOGI(TAG, "Entering in deep sleep from comms_fail path");
+    printf("Entering in deep sleep from comms_fail path\n\n");
 
     ESP_ERROR_CHECK(esp_sleep_enable_ulp_wakeup());
     esp_deep_sleep_start();
@@ -3354,30 +3351,17 @@ void p0_fail_policy_clear_force_turnoff_pending(void)
 void comms_fail(){
     ESP_LOGI(TAG, "comms_fail");
 
-    // Special handling for init P0 comms failure:
-    // first fail waits 12 hours and retries once; second fail triggers final-off flow.
+    // Do not strand the device in a retained overnight startup-failure state.
+    // After a failed confirmed P0, fall back to the normal heartbeat field state
+    // so recovery from brownouts / rough power events stays predictable.
     if (state == 0) {
         ui_p0_comms_error_show();
         ttn_prepare_for_deep_sleep();
-
-        if (s_p0_fail_stage == 0) {
-            s_p0_fail_stage = 1;
-            // Retry one more P0 after 12 hours.
-            ulp_schedule_p0_retry("lmic:comms_fail:first_p0_fail");
-            ulp_state = 0;
-            state = 0;
-            ESP_LOGW(TAG, "P0 comms fail: scheduling one retry in 12 hours");
-            comms_fail_enter_deep_sleep();
-            return;
-        }
-
-        // Second failure: request final P8 + hard power cut on next boot.
-        s_p0_fail_stage = 0;
-        s_p0_force_turnoff_pending = 1;
-        ulp_schedule_immediate(0U, "lmic:comms_fail:final_power_off");
-        ulp_state = 0;
-        state = 0;
-        ESP_LOGW(TAG, "P0 retry failed: scheduling final power-off flow");
+        p0_fail_policy_reset();
+        ulp_schedule_heartbeat_units((uint32_t)PS_Settings.heartbeat, 3U, "lmic:comms_fail:p0_fallback");
+        ulp_state = 3;
+        state = 3;
+        ESP_LOGW(TAG, "P0 comms fail: falling back to heartbeat recovery");
         comms_fail_enter_deep_sleep();
         return;
     }
