@@ -23,6 +23,12 @@
 
 #define TAG "ttn"
 #define TTN_CLOCK_ERROR_PERCENT 10
+#ifndef TTN_JOIN_EVENT_TIMEOUT_MS
+#define TTN_JOIN_EVENT_TIMEOUT_MS 120000U
+#endif
+#ifndef TTN_TRANSMIT_EVENT_TIMEOUT_MS
+#define TTN_TRANSMIT_EVENT_TIMEOUT_MS 120000U
+#endif
 
 int retransmit_counter = 0;
 
@@ -87,6 +93,7 @@ static void save_rf_settings(ttn_rf_settings_t *rf_settings);
 static void clear_rf_settings(ttn_rf_settings_t *rf_settings);
 static bool restored_session_is_valid(void);
 static void clear_transient_tx_state_for_sleep_resume(const char *reason);
+static void reset_waiting_state_after_timeout(const char *reason);
 
 static bool restored_session_is_valid(void)
 {
@@ -128,6 +135,32 @@ static void clear_transient_tx_state_for_sleep_resume(const char *reason)
              (unsigned)old_tx_cnt,
              (unsigned)old_up_repeat_count,
              (unsigned)old_pend_tx_len);
+}
+
+static void reset_waiting_state_after_timeout(const char *reason)
+{
+    u2_t old_opmode;
+
+    hal_esp32_enter_critical_section();
+    waiting_reason = TTN_WAITING_NONE;
+    hal_esp32_leave_critical_section();
+
+    clear_transient_tx_state_for_sleep_resume(reason);
+
+    hal_esp32_enter_critical_section();
+    old_opmode = LMIC.opmode;
+    LMIC.opmode = OP_NONE;
+    hal_esp32_leave_critical_section();
+
+    if (old_opmode != OP_NONE) {
+        ESP_LOGW(TAG, "%s: forced LMIC opmode 0x%x -> OP_NONE after timeout",
+                 reason,
+                 (unsigned)old_opmode);
+    }
+
+    if (lmic_event_queue != NULL) {
+        xQueueReset(lmic_event_queue);
+    }
 }
 
 void ttn_init(void)
@@ -402,7 +435,18 @@ bool join_core(void)
 
     ttn_lmic_event_t event;
 
-    xQueueReceive(lmic_event_queue, &event, portMAX_DELAY);
+    if (xQueueReceive(lmic_event_queue, &event, pdMS_TO_TICKS(TTN_JOIN_EVENT_TIMEOUT_MS)) != pdTRUE)
+    {
+        ESP_LOGW(TAG, "LoRaWAN join timed out waiting for LMIC event after %u ms",
+                 (unsigned)TTN_JOIN_EVENT_TIMEOUT_MS);
+        reset_waiting_state_after_timeout("join event timeout");
+        hal_esp32_enter_critical_section();
+        LMIC_reset();
+        waiting_reason = TTN_WAITING_NONE;
+        hal_esp32_leave_critical_section();
+        has_joined = false;
+        return false;
+    }
 
     has_joined = event.event == TTN_EVNT_JOIN_COMPLETED;
     if (!has_joined) {
@@ -480,6 +524,8 @@ ttn_response_code_t ttn_transmit_message(const uint8_t *payload, size_t length, 
     waiting_reason = TTN_WAITING_FOR_TRANSMISSION;
     // lora_state_tracker = waiting_reason;
 
+    xQueueReset(lmic_event_queue);
+
     LMIC.client.txMessageCb = message_transmitted_callback;
     LMIC.client.txMessageUserData = NULL;
     LMIC_setTxData2(port, (xref2u1_t)payload, length, confirm);
@@ -488,6 +534,8 @@ ttn_response_code_t ttn_transmit_message(const uint8_t *payload, size_t length, 
 
     hal_esp32_leave_critical_section();
     ESP_LOGI(TAG, "382:\n");
+    const TickType_t tx_timeout_ticks = pdMS_TO_TICKS(TTN_TRANSMIT_EVENT_TIMEOUT_MS);
+    const TickType_t tx_started_ticks = xTaskGetTickCount();
     while (true)
     {
         // printf("button_pressed_lora %d", button_pressed_lora);
@@ -503,7 +551,26 @@ ttn_response_code_t ttn_transmit_message(const uint8_t *payload, size_t length, 
         ttn_lmic_event_t result;
         ESP_LOGI(TAG, "397:\n");
 
-        xQueueReceive(lmic_event_queue, &result, portMAX_DELAY);
+        TickType_t elapsed_ticks = xTaskGetTickCount() - tx_started_ticks;
+        if (elapsed_ticks >= tx_timeout_ticks)
+        {
+            ESP_LOGW(TAG, "LoRaWAN transmit timed out waiting for LMIC event after %u ms",
+                     (unsigned)TTN_TRANSMIT_EVENT_TIMEOUT_MS);
+            reset_waiting_state_after_timeout("transmit event timeout");
+            return TTN_ERROR_TRANSMISSION_FAILED;
+        }
+
+        TickType_t remaining_ticks = tx_timeout_ticks - elapsed_ticks;
+        if (remaining_ticks == 0)
+            remaining_ticks = 1;
+
+        if (xQueueReceive(lmic_event_queue, &result, remaining_ticks) != pdTRUE)
+        {
+            ESP_LOGW(TAG, "LoRaWAN transmit timed out waiting for LMIC event after %u ms",
+                     (unsigned)TTN_TRANSMIT_EVENT_TIMEOUT_MS);
+            reset_waiting_state_after_timeout("transmit event timeout");
+            return TTN_ERROR_TRANSMISSION_FAILED;
+        }
     /* now ‘result’ is valid – print it in a human-readable form       */
         ESP_LOGI(TAG, "399:\n");
         switch (result.event)
