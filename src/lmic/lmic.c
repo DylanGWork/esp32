@@ -38,7 +38,13 @@
 extern bool ui_button_interaction_active(void);
 extern void ui_comms_error_show(void);
 extern void ui_p0_comms_error_show(void);
+extern void ui_sleep_led_effect_apply_before_sleep(void);
+extern void ui_sleep_led_effect_enable_before_sleep(void);
 extern void ulp_sleep_plan_apply_wake_mask(const char *reason);
+extern void ulp_sleep_plan_apply_period(const char *reason);
+
+__attribute__((weak)) void pestsense_diag_lmic_sleep_preparing_hook(void) {}
+__attribute__((weak)) void pestsense_diag_lmic_sleep_entering_hook(void) {}
 
 
 #if defined(DISABLE_BEACONS) && !defined(DISABLE_PING)
@@ -3315,13 +3321,18 @@ static RTC_DATA_ATTR uint8_t s_p0_force_turnoff_pending = 0;
 static void comms_fail_enter_deep_sleep(void)
 {
     ulp_main_mcu = 0;
+    pestsense_diag_lmic_sleep_preparing_hook();
     vTaskDelay(100);
+    ui_sleep_led_effect_apply_before_sleep();
     ulp_sleep_plan_apply_wake_mask("lmic:comms_fail_enter_deep_sleep");
+    ulp_sleep_plan_apply_period("lmic:comms_fail_enter_deep_sleep");
     ESP_LOGI(TAG, "States: %d, ulp_led_cmd=%u, led_engine_enabled=%u", state, ulp_led_cmd, ulp_led_engine_enabled);
     ESP_LOGI(TAG, "Entering in deep sleep from comms_fail path");
     printf("Entering in deep sleep from comms_fail path\n\n");
 
     ESP_ERROR_CHECK(esp_sleep_enable_ulp_wakeup());
+    ui_sleep_led_effect_enable_before_sleep();
+    pestsense_diag_lmic_sleep_entering_hook();
     esp_deep_sleep_start();
     ESP_LOGI(TAG, "should not see this");
 }
@@ -3352,16 +3363,16 @@ void comms_fail(){
     ESP_LOGI(TAG, "comms_fail");
 
     // Do not strand the device in a retained overnight startup-failure state.
-    // After a failed confirmed P0, fall back to the normal heartbeat field state
-    // so recovery from brownouts / rough power events stays predictable.
+    // After a failed confirmed P0, enter the install grace window before normal
+    // heartbeat recovery so install handling cannot immediately clear the red UI.
     if (state == 0) {
         ui_p0_comms_error_show();
         ttn_prepare_for_deep_sleep();
         p0_fail_policy_reset();
-        ulp_schedule_heartbeat_units((uint32_t)PS_Settings.heartbeat, 3U, "lmic:comms_fail:p0_fallback");
+        ulp_schedule_install_grace(3U, "lmic:comms_fail:p0_install_grace");
         ulp_state = 3;
         state = 3;
-        ESP_LOGW(TAG, "P0 comms fail: falling back to heartbeat recovery");
+        ESP_LOGW(TAG, "P0 comms fail: entering install grace before heartbeat recovery");
         comms_fail_enter_deep_sleep();
         return;
     }

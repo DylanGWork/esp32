@@ -29,6 +29,9 @@
 #ifndef TTN_TRANSMIT_EVENT_TIMEOUT_MS
 #define TTN_TRANSMIT_EVENT_TIMEOUT_MS 120000U
 #endif
+#ifndef TTN_IDLE_WAIT_TIMEOUT_MS
+#define TTN_IDLE_WAIT_TIMEOUT_MS 120000U
+#endif
 
 int retransmit_counter = 0;
 
@@ -514,10 +517,16 @@ ttn_response_code_t ttn_transmit_message(const uint8_t *payload, size_t length, 
     // gpio_isr_handler_add(6, button_isr_handler, (void*) 6);
 
     hal_esp32_enter_critical_section();
-    if (waiting_reason != TTN_WAITING_NONE || (LMIC.opmode & OP_TXRXPEND) != 0)
+    const ttn_waiting_reason_t busy_reason = waiting_reason;
+    const u2_t busy_opmode = LMIC.opmode;
+    if (busy_reason != TTN_WAITING_NONE || (busy_opmode & OP_TXRXPEND) != 0)
     {
-        ESP_LOGI(TAG, "311: %d\n", waiting_reason);
         hal_esp32_leave_critical_section();
+        ESP_LOGW(TAG,
+                 "LoRaWAN transmit requested while busy (waiting_reason=%d, opmode=0x%x); clearing stale busy state",
+                 busy_reason,
+                 (unsigned)busy_opmode);
+        reset_waiting_state_after_timeout("pre-transmit busy");
         return TTN_ERROR_TRANSMISSION_FAILED;
     }
 
@@ -609,8 +618,24 @@ bool ttn_is_provisioned(void)
 
 void ttn_prepare_for_deep_sleep(void)
 {
+    if (!is_started)
+    {
+        ESP_LOGI(TAG, "LoRaWAN sleep prep skipped: stack not started; preserving RTC session");
+        return;
+    }
+
     clear_transient_tx_state_for_sleep_resume("ttn_prepare_for_deep_sleep");
-    ttn_rtc_save();
+    if (restored_session_is_valid())
+    {
+        ttn_rtc_save();
+    }
+    else
+    {
+        ESP_LOGW(TAG,
+                 "LoRaWAN sleep prep skipped RTC save: no joined session (devaddr=0x%08lx opmode=0x%x)",
+                 (unsigned long)LMIC.devaddr,
+                 (unsigned)LMIC.opmode);
+    }
     stop();
 }
 
@@ -623,11 +648,33 @@ void ttn_prepare_for_power_off(void)
 
 void ttn_wait_for_idle(void)
 {
+    const TickType_t idle_timeout_ticks = pdMS_TO_TICKS(TTN_IDLE_WAIT_TIMEOUT_MS);
+    const TickType_t started_ticks = xTaskGetTickCount();
+
     while (true)
     {
         TickType_t ticks_to_wait = ttn_busy_duration();
-        if (ticks_to_wait == 0)
+        if (ticks_to_wait == 0) {
             return;
+        }
+
+        const TickType_t elapsed_ticks = xTaskGetTickCount() - started_ticks;
+        if (elapsed_ticks >= idle_timeout_ticks) {
+            ESP_LOGW(TAG,
+                     "LoRaWAN idle wait timed out after %u ms; clearing stale busy state",
+                     (unsigned)TTN_IDLE_WAIT_TIMEOUT_MS);
+            reset_waiting_state_after_timeout("idle wait timeout");
+            return;
+        }
+
+        const TickType_t remaining_ticks = idle_timeout_ticks - elapsed_ticks;
+        if (ticks_to_wait > remaining_ticks) {
+            ticks_to_wait = remaining_ticks;
+        }
+        if (ticks_to_wait == 0) {
+            ticks_to_wait = 1;
+        }
+
         vTaskDelay(ticks_to_wait);
     }
 }
