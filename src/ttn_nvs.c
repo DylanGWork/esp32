@@ -28,6 +28,48 @@
 #define NVS_FLASH_KEY_CHUNK_3 "chunk3"
 #define NVS_FLASH_KEY_TIME "time"
 
+void ttn_nvs_invalidate(void)
+{
+    nvs_handle handle = 0;
+    esp_err_t res = nvs_open(NVS_FLASH_PARTITION, NVS_READWRITE, &handle);
+    if (res == ESP_ERR_NVS_NOT_INITIALIZED) {
+        ESP_LOGW(TAG, "NVS storage is not initialized. Call 'nvs_flash_init()' first.");
+    }
+    if (res != ESP_OK) {
+        return;
+    }
+
+    esp_err_t erase_res = nvs_erase_key(handle, NVS_FLASH_KEY_TIME);
+    if (erase_res != ESP_OK && erase_res != ESP_ERR_NVS_NOT_FOUND) {
+        res = erase_res;
+        goto done;
+    }
+    erase_res = nvs_erase_key(handle, NVS_FLASH_KEY_CHUNK_1);
+    if (erase_res != ESP_OK && erase_res != ESP_ERR_NVS_NOT_FOUND) {
+        res = erase_res;
+        goto done;
+    }
+    erase_res = nvs_erase_key(handle, NVS_FLASH_KEY_CHUNK_2);
+    if (erase_res != ESP_OK && erase_res != ESP_ERR_NVS_NOT_FOUND) {
+        res = erase_res;
+        goto done;
+    }
+    erase_res = nvs_erase_key(handle, NVS_FLASH_KEY_CHUNK_3);
+    if (erase_res != ESP_OK && erase_res != ESP_ERR_NVS_NOT_FOUND) {
+        res = erase_res;
+        goto done;
+    }
+
+    res = nvs_commit(handle);
+
+done:
+    nvs_close(handle);
+
+    if (res != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to invalidate LoRaWAN NVS session: %s", esp_err_to_name(res));
+    }
+}
+
 void ttn_nvs_save()
 {
     nvs_handle handle = 0;

@@ -13,6 +13,8 @@
 #include "ttn.h"
 #include "esp_event.h"
 #include "esp_log.h"
+#include "esp_sleep.h"
+#include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "hal/hal_esp32.h"
 #include "lmic/lmic.h"
@@ -20,9 +22,9 @@
 #include "ttn_provisioning.h"
 #include "ttn_nvs.h"
 #include "ttn_rtc.h"
+#include "../../PS_Comms/comms.h"
 
 #define TAG "ttn"
-#define TTN_CLOCK_ERROR_PERCENT 10
 #ifndef TTN_JOIN_EVENT_TIMEOUT_MS
 #define TTN_JOIN_EVENT_TIMEOUT_MS 120000U
 #endif
@@ -32,8 +34,12 @@
 #ifndef TTN_IDLE_WAIT_TIMEOUT_MS
 #define TTN_IDLE_WAIT_TIMEOUT_MS 120000U
 #endif
+#define TTN_LIVENESS_MAGIC 0x54544E4CU
+#define TTN_LIVENESS_VERSION 1U
+#define TTN_LIVENESS_STALE_SECONDS (3U * 60U * 60U)
 
 int retransmit_counter = 0;
+extern int counter_in_rtc_mem;
 
 #define DEFAULT_MAX_TX_POWER -1000
 extern TaskHandle_t LED_SEQUENCE;
@@ -70,6 +76,8 @@ typedef struct
 {
     ttn_event_t event;
     uint8_t port;
+    uint8_t txrx_flags;
+    uint8_t confirmed;
     const uint8_t *message;
     size_t message_size;
 } ttn_lmic_event_t;
@@ -84,6 +92,25 @@ static ttn_rx_tx_window_t current_rx_tx_window;
 static int subband = 2;
 static ttn_data_rate_t join_data_rate = TTN_DR_JOIN_DEFAULT;
 static int max_tx_power = DEFAULT_MAX_TX_POWER;
+static bool s_session_unsaveable;
+static bool s_last_transmit_failure_preserved_session;
+
+typedef struct
+{
+    uint32_t magic;
+    uint16_t version;
+    uint16_t visit_count;
+    uint16_t last_progress_visit;
+    uint16_t stale_visit_count;
+    uint32_t last_seqno_up;
+    uint32_t last_success_counter;
+    uint8_t recovery_stage;
+    uint8_t last_port;
+    uint8_t last_confirmed;
+    uint8_t last_result;
+} ttn_liveness_store_t;
+
+RTC_DATA_ATTR static ttn_liveness_store_t s_liveness;
 
 static void start(void);
 static void stop(void);
@@ -97,12 +124,228 @@ static void clear_rf_settings(ttn_rf_settings_t *rf_settings);
 static bool restored_session_is_valid(void);
 static void clear_transient_tx_state_for_sleep_resume(const char *reason);
 static void reset_waiting_state_after_timeout(const char *reason);
+static void ttn_liveness_init_if_needed(void);
+static uint16_t ttn_liveness_stale_visit_threshold(void);
+static bool lmic_has_transient_tx_state(uint8_t *detail);
+static void reject_restored_session(const char *reason,
+                                    uint8_t guard_code,
+                                    uint8_t reset_reason,
+                                    uint8_t wake_cause,
+                                    uint8_t detail);
+
+__attribute__((weak)) void pestsense_diag_lorawan_rtc_guard_hook(uint8_t guard_code,
+                                                                 uint8_t reset_reason,
+                                                                 uint8_t wake_cause,
+                                                                 uint8_t detail)
+{
+    (void)guard_code;
+    (void)reset_reason;
+    (void)wake_cause;
+    (void)detail;
+}
+
+static void ttn_liveness_init_if_needed(void)
+{
+    if (s_liveness.magic == TTN_LIVENESS_MAGIC &&
+        s_liveness.version == TTN_LIVENESS_VERSION) {
+        return;
+    }
+
+    memset(&s_liveness, 0, sizeof(s_liveness));
+    s_liveness.magic = TTN_LIVENESS_MAGIC;
+    s_liveness.version = TTN_LIVENESS_VERSION;
+    s_liveness.last_seqno_up = LMIC_getSeqnoUp();
+}
+
+static uint16_t ttn_liveness_stale_visit_threshold(void)
+{
+    uint32_t heartbeat_units = (PS_Settings.heartbeat > 0) ? (uint32_t)PS_Settings.heartbeat : 1U;
+    uint32_t heartbeat_seconds = heartbeat_units * (uint32_t)HEARTBEAT_UNIT_SECONDS;
+
+    if (heartbeat_seconds == 0U) {
+        heartbeat_seconds = (uint32_t)HEARTBEAT_UNIT_SECONDS;
+    }
+
+    uint32_t visits = (TTN_LIVENESS_STALE_SECONDS + heartbeat_seconds - 1U) / heartbeat_seconds;
+    if (visits < 1U) {
+        visits = 1U;
+    }
+    if (visits > UINT16_MAX) {
+        visits = UINT16_MAX;
+    }
+    return (uint16_t)visits;
+}
+
+void ttn_liveness_reset_for_cold_boot(void)
+{
+    memset(&s_liveness, 0, sizeof(s_liveness));
+}
+
+void ttn_liveness_note_join_result(bool joined_ok)
+{
+    ttn_liveness_init_if_needed();
+    s_liveness.last_result = joined_ok ? 1U : 0U;
+
+    if (joined_ok) {
+        s_session_unsaveable = false;
+        s_liveness.last_seqno_up = LMIC_getSeqnoUp();
+        s_liveness.last_progress_visit = s_liveness.visit_count;
+        s_liveness.last_success_counter = (uint32_t)counter_in_rtc_mem;
+        s_liveness.stale_visit_count = 0;
+        s_liveness.recovery_stage = 0;
+    }
+}
+
+void ttn_liveness_note_send_result(uint8_t port, bool confirmed, bool tx_ok)
+{
+    ttn_liveness_init_if_needed();
+    s_liveness.last_port = port;
+    s_liveness.last_confirmed = confirmed ? 1U : 0U;
+    s_liveness.last_result = tx_ok ? 1U : 0U;
+    s_liveness.last_seqno_up = LMIC_getSeqnoUp();
+
+    if (tx_ok) {
+        s_session_unsaveable = false;
+        s_liveness.last_progress_visit = s_liveness.visit_count;
+        s_liveness.last_success_counter = (uint32_t)counter_in_rtc_mem;
+        s_liveness.stale_visit_count = 0;
+        s_liveness.recovery_stage = 0;
+    } else if (s_liveness.stale_visit_count < UINT16_MAX) {
+        s_liveness.stale_visit_count++;
+    }
+}
+
+void ttn_mark_session_unsaveable(const char *reason)
+{
+    s_session_unsaveable = true;
+    ttn_rtc_invalidate();
+    ESP_LOGW(TAG,
+             "LoRaWAN session marked unsaveable and RTC image invalidated (%s)",
+             reason != NULL ? reason : "unspecified");
+}
+
+bool ttn_liveness_check_recovery(void)
+{
+    if (esp_reset_reason() != ESP_RST_DEEPSLEEP) {
+        return false;
+    }
+
+    ttn_liveness_init_if_needed();
+    if (s_liveness.visit_count < UINT16_MAX) {
+        s_liveness.visit_count++;
+    }
+
+    const uint16_t threshold = ttn_liveness_stale_visit_threshold();
+    const uint16_t age = (uint16_t)(s_liveness.visit_count - s_liveness.last_progress_visit);
+
+    const bool last_progress_was_failure = (s_liveness.last_result == 0U);
+    const bool stale_after_failure = last_progress_was_failure && (age >= threshold);
+    const bool repeated_failures = s_liveness.stale_visit_count >= threshold;
+
+    if (!stale_after_failure && !repeated_failures) {
+        return false;
+    }
+
+    const uint8_t stage = (s_liveness.recovery_stage < 2U) ? (uint8_t)(s_liveness.recovery_stage + 1U) : 2U;
+    const int32_t detail = (int32_t)((((uint32_t)threshold & 0xFFU) << 24) |
+                                    (((uint32_t)age & 0xFFU) << 16) |
+                                    (((uint32_t)s_liveness.stale_visit_count & 0xFFU) << 8) |
+                                    ((uint32_t)s_liveness.last_result & 0xFFU));
+
+    s_liveness.recovery_stage = stage;
+    s_liveness.last_progress_visit = s_liveness.visit_count;
+    s_liveness.stale_visit_count = 0;
+
+    ESP_LOGW(TAG,
+             "LoRaWAN liveness recovery stage=%u age=%u threshold=%u last_port=%u last_ok=%u seq=%lu counter=%u",
+             (unsigned)stage,
+             (unsigned)age,
+             (unsigned)threshold,
+             (unsigned)s_liveness.last_port,
+             (unsigned)s_liveness.last_result,
+             (unsigned long)s_liveness.last_seqno_up,
+             (unsigned)counter_in_rtc_mem);
+    comms_diag_log(COMMS_DIAG_EVT_LORAWAN_LIVENESS_RECOVERY,
+                   stage,
+                   detail,
+                   s_liveness.last_port);
+
+    ttn_rtc_invalidate();
+    reset_waiting_state_after_timeout("lorawan liveness recovery");
+    has_joined = false;
+
+    if (stage >= 2U) {
+        ESP_LOGE(TAG, "LoRaWAN liveness recovery escalating to software reset");
+        esp_restart();
+    }
+
+    return true;
+}
+
+static bool lmic_has_transient_tx_state(uint8_t *detail)
+{
+    const u2_t active_tx_mask = OP_TXDATA | OP_POLL | OP_TXRXPEND | OP_JOINING;
+    uint8_t flags = 0;
+
+    if ((LMIC.opmode & active_tx_mask) != 0) {
+        flags |= 0x01U;
+    }
+    if (LMIC.txCnt != 0) {
+        flags |= 0x02U;
+    }
+    if (LMIC.upRepeatCount != 0) {
+        flags |= 0x04U;
+    }
+    if (LMIC.pendTxLen != 0 && (LMIC.opmode & active_tx_mask) != 0) {
+        flags |= 0x08U;
+    }
+    if (waiting_reason != TTN_WAITING_NONE) {
+        flags |= 0x10U;
+    }
+
+    if (detail != NULL) {
+        *detail = flags;
+    }
+    return flags != 0U;
+}
+
+static void reject_restored_session(const char *reason,
+                                    uint8_t guard_code,
+                                    uint8_t reset_reason,
+                                    uint8_t wake_cause,
+                                    uint8_t detail)
+{
+    ESP_LOGW(TAG,
+             "%s; rejecting retained LoRaWAN session (guard=%u detail=0x%02x)",
+             reason,
+             (unsigned)guard_code,
+             (unsigned)detail);
+    pestsense_diag_lorawan_rtc_guard_hook(guard_code,
+                                          reset_reason,
+                                          wake_cause,
+                                          detail);
+    ttn_rtc_invalidate();
+    reset_waiting_state_after_timeout(reason);
+    hal_esp32_enter_critical_section();
+    LMIC_reset();
+    waiting_reason = TTN_WAITING_NONE;
+    hal_esp32_leave_critical_section();
+    has_joined = false;
+}
 
 static bool restored_session_is_valid(void)
 {
     // A restored LMIC image is only usable as a resumed joined session if it
     // actually carries a session DevAddr and is not still mid-join.
     return (LMIC.devaddr != 0) && ((LMIC.opmode & OP_JOINING) == 0);
+}
+
+static bool tx_failure_is_confirmed_ack_miss(const ttn_lmic_event_t *result)
+{
+    return result != NULL &&
+           result->confirmed != 0U &&
+           (result->txrx_flags & TXRX_NACK) != 0U &&
+           (result->txrx_flags & TXRX_LENERR) == 0U;
 }
 
 static void clear_transient_tx_state_for_sleep_resume(const char *reason)
@@ -206,11 +449,6 @@ void start(void)
     hal_esp32_enter_critical_section();
     LMIC_reset();
 
-    LMIC_setClockError(MAX_CLOCK_ERROR * TTN_CLOCK_ERROR_PERCENT / 100);
-    ESP_LOGI(TAG,
-             "LoRa RX clock error allowance requested: %u%% (LMIC_ENABLE_arbitrary_clock_error=%d)",
-             (unsigned)TTN_CLOCK_ERROR_PERCENT,
-             (int)LMIC_ENABLE_arbitrary_clock_error);
     waiting_reason = TTN_WAITING_NONE;
     // lora_state_tracker = waiting_reason;
 
@@ -317,6 +555,26 @@ bool ttn_join(void)
 
 bool ttn_resume_after_deep_sleep(void)
 {
+    const esp_reset_reason_t reset_reason = esp_reset_reason();
+    const esp_sleep_wakeup_cause_t wake_cause = esp_sleep_get_wakeup_cause();
+
+    if (reset_reason != ESP_RST_DEEPSLEEP)
+    {
+        if (ttn_rtc_is_valid())
+        {
+            ESP_LOGW(TAG,
+                     "Rejecting LoRaWAN RTC restore on non-deep-sleep reset (reset_reason=%d wake_cause=%d); invalidating retained LMIC session",
+                     (int)reset_reason,
+                     (int)wake_cause);
+            pestsense_diag_lorawan_rtc_guard_hook(1,
+                                                  (uint8_t)reset_reason,
+                                                  (uint8_t)wake_cause,
+                                                  1);
+            ttn_rtc_invalidate();
+        }
+        return false;
+    }
+
     if (!ttn_provisioning_have_keys())
     {
         ESP_LOGW(TAG, "Dev ttn_provisioning_have_keys ed");
@@ -338,16 +596,26 @@ bool ttn_resume_after_deep_sleep(void)
     if (!ttn_rtc_restore())
         return false;
 
+    uint8_t transient_detail = 0;
+    if (lmic_has_transient_tx_state(&transient_detail))
+    {
+        reject_restored_session("RTC LMIC restore contained transient TX state",
+                                5,
+                                (uint8_t)reset_reason,
+                                (uint8_t)wake_cause,
+                                transient_detail);
+        return false;
+    }
+
     clear_transient_tx_state_for_sleep_resume("ttn_resume_after_deep_sleep");
 
     if (!restored_session_is_valid())
     {
-        ESP_LOGW(TAG, "RTC LMIC restore had no valid joined session; forcing fresh join");
-        hal_esp32_enter_critical_section();
-        LMIC_reset();
-        waiting_reason = TTN_WAITING_NONE;
-        hal_esp32_leave_critical_section();
-        has_joined = false;
+        reject_restored_session("RTC LMIC restore had no valid joined session",
+                                2,
+                                (uint8_t)reset_reason,
+                                (uint8_t)wake_cause,
+                                0);
         return false;
     }
 
@@ -374,16 +642,26 @@ bool ttn_resume_after_power_off(int off_duration)
     if (!ttn_nvs_restore(off_duration))
         return false;
 
+    uint8_t transient_detail = 0;
+    if (lmic_has_transient_tx_state(&transient_detail))
+    {
+        reject_restored_session("NVS LMIC restore contained transient TX state",
+                                5,
+                                (uint8_t)esp_reset_reason(),
+                                (uint8_t)esp_sleep_get_wakeup_cause(),
+                                transient_detail);
+        return false;
+    }
+
     clear_transient_tx_state_for_sleep_resume("ttn_resume_after_power_off");
 
     if (!restored_session_is_valid())
     {
-        ESP_LOGW(TAG, "NVS LMIC restore had no valid joined session; forcing fresh join");
-        hal_esp32_enter_critical_section();
-        LMIC_reset();
-        waiting_reason = TTN_WAITING_NONE;
-        hal_esp32_leave_critical_section();
-        has_joined = false;
+        reject_restored_session("NVS LMIC restore had no valid joined session",
+                                2,
+                                (uint8_t)esp_reset_reason(),
+                                (uint8_t)esp_sleep_get_wakeup_cause(),
+                                0);
         return false;
     }
 
@@ -499,6 +777,7 @@ static __attribute__((unused)) const char *lmic_ev_name(uint8_t e)
 
 ttn_response_code_t ttn_transmit_message(const uint8_t *payload, size_t length, ttn_port_t port, bool confirm)
 {
+    s_last_transmit_failure_preserved_session = false;
     // gpio_config_t io_conf;
     // //interrupt on both edges
     // io_conf.intr_type = GPIO_PIN_INTR_ANYEDGE;
@@ -519,13 +798,17 @@ ttn_response_code_t ttn_transmit_message(const uint8_t *payload, size_t length, 
     hal_esp32_enter_critical_section();
     const ttn_waiting_reason_t busy_reason = waiting_reason;
     const u2_t busy_opmode = LMIC.opmode;
-    if (busy_reason != TTN_WAITING_NONE || (busy_opmode & OP_TXRXPEND) != 0)
+    uint8_t busy_detail = 0;
+    const bool tx_state_dirty = lmic_has_transient_tx_state(&busy_detail);
+    if (tx_state_dirty)
     {
         hal_esp32_leave_critical_section();
         ESP_LOGW(TAG,
-                 "LoRaWAN transmit requested while busy (waiting_reason=%d, opmode=0x%x); clearing stale busy state",
+                 "LoRaWAN transmit requested while busy/dirty (waiting_reason=%d, opmode=0x%x, detail=0x%02x); clearing stale busy state",
                  busy_reason,
-                 (unsigned)busy_opmode);
+                 (unsigned)busy_opmode,
+                 (unsigned)busy_detail);
+        ttn_mark_session_unsaveable("pre-transmit busy");
         reset_waiting_state_after_timeout("pre-transmit busy");
         return TTN_ERROR_TRANSMISSION_FAILED;
     }
@@ -537,7 +820,24 @@ ttn_response_code_t ttn_transmit_message(const uint8_t *payload, size_t length, 
 
     LMIC.client.txMessageCb = message_transmitted_callback;
     LMIC.client.txMessageUserData = NULL;
-    LMIC_setTxData2(port, (xref2u1_t)payload, length, confirm);
+    const lmic_tx_error_t enqueue_result = LMIC_setTxData2(port, (xref2u1_t)payload, length, confirm);
+    if (enqueue_result != LMIC_ERROR_SUCCESS)
+    {
+        waiting_reason = TTN_WAITING_NONE;
+        hal_esp32_leave_critical_section();
+        ESP_LOGW(TAG,
+                 "LoRaWAN transmit enqueue failed immediately (result=%d, port=%u, confirmed=%u, opmode=0x%x, txCnt=%u, upRepeat=%u, pendTxLen=%u)",
+                 (int)enqueue_result,
+                 (unsigned)port,
+                 confirm ? 1U : 0U,
+                 (unsigned)LMIC.opmode,
+                 (unsigned)LMIC.txCnt,
+                 (unsigned)LMIC.upRepeatCount,
+                 (unsigned)LMIC.pendTxLen);
+        ttn_mark_session_unsaveable("transmit enqueue failed");
+        reset_waiting_state_after_timeout("transmit enqueue failed");
+        return TTN_ERROR_TRANSMISSION_FAILED;
+    }
     hal_esp32_wake_up();
     ESP_LOGI(TAG, "381:\n");
 
@@ -565,6 +865,7 @@ ttn_response_code_t ttn_transmit_message(const uint8_t *payload, size_t length, 
         {
             ESP_LOGW(TAG, "LoRaWAN transmit timed out waiting for LMIC event after %u ms",
                      (unsigned)TTN_TRANSMIT_EVENT_TIMEOUT_MS);
+            ttn_mark_session_unsaveable("transmit event timeout");
             reset_waiting_state_after_timeout("transmit event timeout");
             return TTN_ERROR_TRANSMISSION_FAILED;
         }
@@ -577,6 +878,7 @@ ttn_response_code_t ttn_transmit_message(const uint8_t *payload, size_t length, 
         {
             ESP_LOGW(TAG, "LoRaWAN transmit timed out waiting for LMIC event after %u ms",
                      (unsigned)TTN_TRANSMIT_EVENT_TIMEOUT_MS);
+            ttn_mark_session_unsaveable("transmit event timeout");
             reset_waiting_state_after_timeout("transmit event timeout");
             return TTN_ERROR_TRANSMISSION_FAILED;
         }
@@ -590,15 +892,34 @@ ttn_response_code_t ttn_transmit_message(const uint8_t *payload, size_t length, 
             break;
 
         case TTN_EVENT_TRANSMISSION_COMPLETED:
+            s_session_unsaveable = false;
+            s_last_transmit_failure_preserved_session = false;
             return TTN_SUCCESSFUL_TRANSMISSION;
 
         case TTN_EVENT_TRANSMISSION_FAILED:
+            if (tx_failure_is_confirmed_ack_miss(&result))
+            {
+                ESP_LOGW(TAG,
+                         "Confirmed LoRaWAN uplink completed without ACK (txrxFlags=0x%02x); preserving joined session for next wake",
+                         (unsigned)result.txrx_flags);
+                clear_transient_tx_state_for_sleep_resume("confirmed uplink ack missing");
+                s_last_transmit_failure_preserved_session = true;
+                return TTN_ERROR_TRANSMISSION_FAILED;
+            }
+            s_last_transmit_failure_preserved_session = false;
+            ttn_mark_session_unsaveable("transmission failed event");
+            reset_waiting_state_after_timeout("transmission failed event");
             return TTN_ERROR_TRANSMISSION_FAILED;
 
         default:
             ASSERT(0);
         }
     }
+}
+
+bool ttn_last_transmit_failure_preserved_session(void)
+{
+    return s_last_transmit_failure_preserved_session;
 }
 
 void ttn_on_message(ttn_message_cb callback)
@@ -618,9 +939,46 @@ bool ttn_is_provisioned(void)
 
 void ttn_prepare_for_deep_sleep(void)
 {
+    uint8_t transient_detail = 0;
+
     if (!is_started)
     {
         ESP_LOGI(TAG, "LoRaWAN sleep prep skipped: stack not started; preserving RTC session");
+        return;
+    }
+
+    if (s_session_unsaveable)
+    {
+        ESP_LOGW(TAG, "LoRaWAN sleep prep invalidating RTC session marked unsaveable");
+        pestsense_diag_lorawan_rtc_guard_hook(4,
+                                              (uint8_t)esp_reset_reason(),
+                                              (uint8_t)esp_sleep_get_wakeup_cause(),
+                                              0);
+        ttn_rtc_invalidate();
+        clear_transient_tx_state_for_sleep_resume("ttn_prepare_for_deep_sleep:unsaveable");
+        stop();
+        has_joined = false;
+        s_session_unsaveable = false;
+        return;
+    }
+
+    if (lmic_has_transient_tx_state(&transient_detail))
+    {
+        ESP_LOGW(TAG,
+                 "LoRaWAN sleep prep found transient TX state (detail=0x%02x opmode=0x%x txCnt=%u upRepeat=%u pendTxLen=%u); invalidating RTC session",
+                 (unsigned)transient_detail,
+                 (unsigned)LMIC.opmode,
+                 (unsigned)LMIC.txCnt,
+                 (unsigned)LMIC.upRepeatCount,
+                 (unsigned)LMIC.pendTxLen);
+        pestsense_diag_lorawan_rtc_guard_hook(3,
+                                              (uint8_t)esp_reset_reason(),
+                                              (uint8_t)esp_sleep_get_wakeup_cause(),
+                                              transient_detail);
+        ttn_rtc_invalidate();
+        clear_transient_tx_state_for_sleep_resume("ttn_prepare_for_deep_sleep:transient");
+        stop();
+        has_joined = false;
         return;
     }
 
@@ -628,6 +986,7 @@ void ttn_prepare_for_deep_sleep(void)
     if (restored_session_is_valid())
     {
         ttn_rtc_save();
+        s_session_unsaveable = false;
     }
     else
     {
@@ -641,8 +1000,44 @@ void ttn_prepare_for_deep_sleep(void)
 
 void ttn_prepare_for_power_off(void)
 {
+    uint8_t transient_detail = 0;
+
+    if (s_session_unsaveable)
+    {
+        ESP_LOGW(TAG, "LoRaWAN power-off prep invalidating NVS session marked unsaveable");
+        ttn_nvs_invalidate();
+        clear_transient_tx_state_for_sleep_resume("ttn_prepare_for_power_off:unsaveable");
+        stop();
+        has_joined = false;
+        s_session_unsaveable = false;
+        return;
+    }
+
+    if (lmic_has_transient_tx_state(&transient_detail))
+    {
+        ESP_LOGW(TAG,
+                 "LoRaWAN power-off prep found transient TX state (detail=0x%02x); invalidating NVS session",
+                 (unsigned)transient_detail);
+        ttn_nvs_invalidate();
+        clear_transient_tx_state_for_sleep_resume("ttn_prepare_for_power_off:transient");
+        stop();
+        has_joined = false;
+        return;
+    }
+
     clear_transient_tx_state_for_sleep_resume("ttn_prepare_for_power_off");
-    ttn_nvs_save();
+    if (restored_session_is_valid())
+    {
+        ttn_nvs_save();
+    }
+    else
+    {
+        ESP_LOGW(TAG,
+                 "LoRaWAN power-off prep skipped NVS save: no joined session (devaddr=0x%08lx opmode=0x%x)",
+                 (unsigned long)LMIC.devaddr,
+                 (unsigned)LMIC.opmode);
+        ttn_nvs_invalidate();
+    }
     stop();
 }
 
@@ -881,7 +1276,11 @@ void message_transmitted_callback(void *user_data, int success)
         retransmit_counter = 0;
     }
 
-    ttn_lmic_event_t result = {.event = success ? TTN_EVENT_TRANSMISSION_COMPLETED : TTN_EVENT_TRANSMISSION_FAILED};
+    ttn_lmic_event_t result = {
+        .event = success ? TTN_EVENT_TRANSMISSION_COMPLETED : TTN_EVENT_TRANSMISSION_FAILED,
+        .txrx_flags = LMIC.txrxFlags,
+        .confirmed = LMIC.pendTxConf ? 1U : 0U,
+    };
     ESP_LOGI(TAG, "750:\n");
     xQueueSend(lmic_event_queue, &result, pdMS_TO_TICKS(100));
 }

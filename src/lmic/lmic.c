@@ -38,8 +38,14 @@
 extern bool ui_button_interaction_active(void);
 extern void ui_comms_error_show(void);
 extern void ui_p0_comms_error_show(void);
+extern void ui_join_green_hold_end_if_active(void);
 extern void ui_sleep_led_effect_apply_before_sleep(void);
 extern void ui_sleep_led_effect_enable_before_sleep(void);
+extern void ttn_mark_session_unsaveable(const char *reason);
+extern void setup_membrane(void);
+extern void setup_ulp(void);
+extern void ULP_Var_reset(void);
+extern bool critical_queue_flush_if_due(uint32_t now_wake);
 extern void ulp_sleep_plan_apply_wake_mask(const char *reason);
 extern void ulp_sleep_plan_apply_period(const char *reason);
 
@@ -2449,13 +2455,10 @@ static bit_t processDnData_norx(void) {
             engineUpdate();
             return 1;
         }
-        const bool field_operation_failure = !ui_button_interaction_active() &&
-            (state == 3 || state == 4 || state == 6 || state == 7 || state == 9);
-        if (!field_operation_failure) {
-            comms_fail();
-            return 1;
-        }
-        // confirmed uplink is complete without an ack: no port and no flag
+        ESP_LOGW(TAG,
+                 "Confirmed uplink not ACKed after %u attempts; completing as NACK and preserving joined session",
+                 (unsigned)retry_limit);
+        // confirmed uplink is complete without an ack: no port and NACK flag
         initTxrxFlags(__func__, TXRX_NACK | TXRX_NOPORT);
     } else if (LMIC.upRepeatCount != 0) {
         if (LMIC.upRepeatCount < LMIC.upRepeat) {
@@ -3323,6 +3326,11 @@ static void comms_fail_enter_deep_sleep(void)
     ulp_main_mcu = 0;
     pestsense_diag_lmic_sleep_preparing_hook();
     vTaskDelay(100);
+    setup_membrane();
+    setup_ulp();
+    ULP_Var_reset();
+    (void)critical_queue_flush_if_due(UINT32_MAX);
+    ui_join_green_hold_end_if_active();
     ui_sleep_led_effect_apply_before_sleep();
     ulp_sleep_plan_apply_wake_mask("lmic:comms_fail_enter_deep_sleep");
     ulp_sleep_plan_apply_period("lmic:comms_fail_enter_deep_sleep");
@@ -3367,6 +3375,7 @@ void comms_fail(){
     // heartbeat recovery so install handling cannot immediately clear the red UI.
     if (state == 0) {
         ui_p0_comms_error_show();
+        ttn_mark_session_unsaveable("lmic:p0_comms_fail");
         ttn_prepare_for_deep_sleep();
         p0_fail_policy_reset();
         ulp_schedule_install_grace(3U, "lmic:comms_fail:p0_install_grace");
@@ -3383,6 +3392,7 @@ void comms_fail(){
     if (ui_button_interaction_active() || state == 8) {
         ui_comms_error_show();
     }
+    ttn_mark_session_unsaveable("lmic:comms_fail");
     ttn_prepare_for_deep_sleep();
     ulp_schedule_heartbeat_units((uint32_t)PS_Settings.heartbeat, 3U, "lmic:comms_fail:default");
     ulp_state = 3;

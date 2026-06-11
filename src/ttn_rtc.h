@@ -22,6 +22,8 @@ extern "C"
 
     void ttn_rtc_save();
     bool ttn_rtc_restore();
+    bool ttn_rtc_is_valid(void);
+    void ttn_rtc_invalidate(void);
 
 #ifdef __cplusplus
 }

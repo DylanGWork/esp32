@@ -589,6 +589,33 @@ extern "C"
     bool ttn_resume_after_deep_sleep(void);
 
     /**
+     * @brief Clears retained LoRaWAN liveness guard state on a clean boot path.
+     */
+    void ttn_liveness_reset_for_cold_boot(void);
+
+    /**
+     * @brief Checks whether a resumed LoRaWAN session has gone stale.
+     *
+     * @return true if the retained session was invalidated and a fresh join should be attempted.
+     */
+    bool ttn_liveness_check_recovery(void);
+
+    /**
+     * @brief Records the outcome of a join attempt for the liveness guard.
+     */
+    void ttn_liveness_note_join_result(bool joined_ok);
+
+    /**
+     * @brief Records LoRaWAN TX progress for the liveness guard.
+     */
+    void ttn_liveness_note_send_result(uint8_t port, bool confirmed, bool tx_ok);
+
+    /**
+     * @brief Marks the currently running LoRaWAN session as unsafe to retain.
+     */
+    void ttn_mark_session_unsaveable(const char *reason);
+
+    /**
      * @brief Resumes TTN communication after power off.
      * 
      * The communcation state is restored from data previously saved in NVS (non-volatile storage).
@@ -699,6 +726,17 @@ extern "C"
      * failed transmission, @ref TTN_ERROR_UNEXPECTED for unexpected error
      */
     ttn_response_code_t ttn_transmit_message(const uint8_t *payload, size_t length, ttn_port_t port, bool confirm);
+
+    /**
+     * @brief Returns whether the most recent failed transmit preserved the joined session.
+     *
+     * This is true for confirmed uplinks that exhausted ACK attempts without
+     * evidence of session corruption. The packet still failed, but the caller
+     * should not force a rejoin solely because of that no-ACK result.
+     *
+     * @return `true` if the last transmit failure preserved the LoRaWAN session
+     */
+    bool ttn_last_transmit_failure_preserved_session(void);
 
     /**
      * @brief Sets the function to be called when a message is received

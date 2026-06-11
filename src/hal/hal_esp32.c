@@ -522,18 +522,28 @@ void hal_processPendingIRQs(void)
 // -----------------------------------------------------------------------------
 // Synchronization between application code and background task
 
+static void ensure_critical_section_mutex(void)
+{
+    if (mutex == NULL) {
+        mutex = xSemaphoreCreateRecursiveMutex();
+        configASSERT(mutex != NULL);
+    }
+}
+
 void hal_esp32_init_critical_section(void)
 {
-    mutex = xSemaphoreCreateRecursiveMutex();
+    ensure_critical_section_mutex();
 }
 
 void hal_esp32_enter_critical_section(void)
 {
+    ensure_critical_section_mutex();
     xSemaphoreTakeRecursive(mutex, portMAX_DELAY);
 }
 
 void hal_esp32_leave_critical_section(void)
 {
+    configASSERT(mutex != NULL);
     xSemaphoreGiveRecursive(mutex);
 }
 

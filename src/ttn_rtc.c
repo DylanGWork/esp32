@@ -24,6 +24,17 @@
 RTC_DATA_ATTR uint8_t ttn_rtc_mem_buf[TTN_RTC_MEM_SIZE];
 RTC_DATA_ATTR uint32_t ttn_rtc_flag;
 
+bool ttn_rtc_is_valid(void)
+{
+    return ttn_rtc_flag == TTN_RTC_FLAG_VALUE;
+}
+
+void ttn_rtc_invalidate(void)
+{
+    ttn_rtc_flag = 0xffffffff;
+    memset(ttn_rtc_mem_buf, 0, sizeof(ttn_rtc_mem_buf));
+}
+
 void ttn_rtc_save()
 {
     // Copy LMIC struct except client, osjob, pendTxData and frame
@@ -39,7 +50,7 @@ void ttn_rtc_save()
 
 bool ttn_rtc_restore()
 {
-    if (ttn_rtc_flag != TTN_RTC_FLAG_VALUE)
+    if (!ttn_rtc_is_valid())
         return false;
 
     // Restore data
@@ -52,7 +63,7 @@ bool ttn_rtc_restore()
     size_t len3 = sizeof(struct lmic_t) - LMIC_OFFSET(frame) - MAX_LEN_FRAME;
     memcpy((u1_t *)&LMIC.frame + MAX_LEN_FRAME, ttn_rtc_mem_buf + len1 + len2, len3);
 
-    ttn_rtc_flag = 0xffffffff; // invalidate RTC data
+    ttn_rtc_invalidate(); // invalidate RTC data
 
     return true;
 }

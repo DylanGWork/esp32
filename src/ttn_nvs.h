@@ -22,6 +22,7 @@ extern "C"
 
     void ttn_nvs_save();
     bool ttn_nvs_restore(int off_duration);
+    void ttn_nvs_invalidate(void);
 
 #ifdef __cplusplus
 }
