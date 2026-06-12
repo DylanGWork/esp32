@@ -47,7 +47,7 @@ extern void setup_ulp(void);
 extern void ULP_Var_reset(void);
 extern bool critical_queue_flush_if_due(uint32_t now_wake);
 extern void ulp_sleep_plan_apply_wake_mask(const char *reason);
-extern void ulp_sleep_plan_apply_period(const char *reason);
+extern void ulp_sleep_plan_arm_timer_for_sleep(const char *reason);
 
 __attribute__((weak)) void pestsense_diag_lmic_sleep_preparing_hook(void) {}
 __attribute__((weak)) void pestsense_diag_lmic_sleep_entering_hook(void) {}
@@ -3333,7 +3333,7 @@ static void comms_fail_enter_deep_sleep(void)
     ui_join_green_hold_end_if_active();
     ui_sleep_led_effect_apply_before_sleep();
     ulp_sleep_plan_apply_wake_mask("lmic:comms_fail_enter_deep_sleep");
-    ulp_sleep_plan_apply_period("lmic:comms_fail_enter_deep_sleep");
+    ulp_sleep_plan_arm_timer_for_sleep("lmic:comms_fail_enter_deep_sleep");
     ESP_LOGI(TAG, "States: %d, ulp_led_cmd=%u, led_engine_enabled=%u", state, ulp_led_cmd, ulp_led_engine_enabled);
     ESP_LOGI(TAG, "Entering in deep sleep from comms_fail path");
     printf("Entering in deep sleep from comms_fail path\n\n");
